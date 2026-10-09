@@ -1,17 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Store, Upload, Contact, MessageCircle, Camera, Mail, Palette, Check, Save, QrCode, RotateCcw, CheckCircle2, Trash2, DollarSign, Percent, TrendingUp, Calculator, AlertTriangle, ShieldCheck, Tag } from 'lucide-react';
+import { Store, Upload, Contact, MessageCircle, Camera, Mail, Palette, Check, Save, QrCode, RotateCcw, CheckCircle2, Trash2, DollarSign, Percent, TrendingUp, Calculator, AlertTriangle, ShieldCheck, Tag, Lock, LogIn, LogOut, User as UserIcon } from 'lucide-react';
 import { getStoredSettings, saveStoredSettings, DEFAULT_SETTINGS, SystemSettings } from '../utils/settingsStorage';
 import { calculateSalePrice } from '../utils/pricingCalculator';
+import { auth, subscribeToAuth, connectWithGoogle, logoutUser } from '../lib/firebase';
+import { executeGoogleMigration } from '../utils/ordersStorage';
+import { User } from 'firebase/auth';
 
 export function Ajustes() {
   const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [showSavedToast, setShowSavedToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const loaded = getStoredSettings();
     setSettings(loaded);
+
+    const unsub = subscribeToAuth((u) => {
+      setCurrentUser(u);
+    });
+    return () => unsub();
   }, []);
 
   const handleChange = (field: keyof SystemSettings, value: any) => {
@@ -88,6 +98,51 @@ export function Ajustes() {
       setToastMessage('Configurações restauradas para o padrão!');
       setShowSavedToast(true);
       setTimeout(() => setShowSavedToast(false), 3500);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    try {
+      setIsAuthenticating(true);
+      const authResult = await connectWithGoogle();
+      const migrationRes = await executeGoogleMigration(authResult);
+      
+      const userName = authResult.user.displayName || authResult.user.email || 'Usuário';
+      if (migrationRes.migratedCount > 0) {
+        setToastMessage(`Conectado como ${userName}! ${migrationRes.migratedCount} pedido(s) sincronizado(s).`);
+      } else {
+        setToastMessage(`Conectado com sucesso como ${userName}!`);
+      }
+      setShowSavedToast(true);
+      setTimeout(() => setShowSavedToast(false), 4000);
+    } catch (err: any) {
+      if (
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request' ||
+        err?.message?.includes('cancelado')
+      ) {
+        setToastMessage('Conexão com Google cancelada.');
+      } else {
+        console.error('Erro ao conectar com Google:', err);
+        setToastMessage(err?.message || 'Falha ao autenticar com Google.');
+      }
+      setShowSavedToast(true);
+      setTimeout(() => setShowSavedToast(false), 4000);
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (confirm('Deseja desconectar sua conta? Os dados permanecerão salvos com segurança.')) {
+      try {
+        await logoutUser();
+        setToastMessage('Conta desconectada.');
+        setShowSavedToast(true);
+        setTimeout(() => setShowSavedToast(false), 3500);
+      } catch (err: any) {
+        console.error('Erro ao deslogar:', err);
+      }
     }
   };
 
@@ -289,13 +344,13 @@ export function Ajustes() {
                   <p className="text-[11px] text-on-surface-variant">Custos operacionais e fixos rateados</p>
                 </div>
 
-                {/* Margem de lucro desejada */}
+                {/* Lucro sobre o custo (Markup desejado) */}
                 <div className="flex flex-col gap-1.5 bg-surface-container p-3.5 rounded-lg border border-primary/30 bg-primary/5">
                   <div className="flex justify-between items-center">
                     <label htmlFor="fin_margem" className="text-xs font-mono font-bold text-primary uppercase tracking-wider">
-                      Margem de Lucro Desejada
+                      Lucro sobre o custo
                     </label>
-                    <span className="text-[10px] text-primary font-mono font-bold">% sobre custo</span>
+                    <span className="text-[10px] text-primary font-mono font-bold">% sobre custo (Markup)</span>
                   </div>
                   <div className="relative">
                     <input 
@@ -314,7 +369,7 @@ export function Ajustes() {
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono text-primary font-bold">%</span>
                   </div>
-                  <p className="text-[11px] text-on-surface-variant">Lucro líquido garantido após todas as taxas</p>
+                  <p className="text-[11px] text-on-surface-variant">Percentual aplicado ao custo base para compor o preço (distinto da margem sobre a venda)</p>
                 </div>
               </div>
 
@@ -351,6 +406,9 @@ export function Ajustes() {
                       <span className="text-xs text-on-surface">
                         Custo Base: <strong>R$ {preview.custoBase.toFixed(2)}</strong> | Taxas Totais: <strong>{preview.totalTaxasPercentual}%</strong>
                       </span>
+                      <span className="text-[11px] text-on-surface-variant font-mono">
+                        Lucro sobre custo: <strong>{settings.margemLucroPadrao || 40}%</strong> ➔ Margem sobre o preço de venda: <strong>{preview.margemEfetiva}%</strong>
+                      </span>
                     </div>
 
                     <div className="flex items-center gap-4 text-xs font-mono">
@@ -360,8 +418,8 @@ export function Ajustes() {
                       </div>
                       <div className="h-6 w-px bg-outline-variant"></div>
                       <div className="text-right">
-                        <span className="text-[10px] text-on-surface-variant block uppercase">Lucro Líquido</span>
-                        <span className="text-sm font-bold text-primary font-mono">R$ {preview.lucroLiquido.toFixed(2)} ({preview.margemEfetiva}%)</span>
+                        <span className="text-[10px] text-on-surface-variant block uppercase">Lucro Líquido Real</span>
+                        <span className="text-sm font-bold text-primary font-mono">R$ {preview.lucroLiquido.toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -617,6 +675,75 @@ export function Ajustes() {
                 ></textarea>
                 <span className="text-[11px] font-mono text-on-surface-variant text-right">Exibido na área inferior do comprovante</span>
               </div>
+            </div>
+          </section>
+
+          {/* Segurança & Sincronização (Firebase) */}
+          <section className="bg-surface-container-low border border-outline-variant rounded-lg overflow-hidden shadow-sm">
+            <div className="px-6 py-4 bg-surface-container border-b border-outline-variant flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <ShieldCheck className="text-primary w-5 h-5" />
+                <h3 className="text-sm font-medium text-on-surface uppercase tracking-wider">Segurança & Nuvem</h3>
+              </div>
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                REGRAS ATIVAS
+              </span>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="text-xs text-on-surface-variant leading-relaxed">
+                Seus orçamentos e ajustes possuem proteção por proprietário (<code className="text-primary font-mono font-bold">ownerUid</code>). Somente o seu usuário possui permissão de leitura e edição.
+              </div>
+
+              {currentUser && !currentUser.isAnonymous ? (
+                <div className="bg-surface-container p-3.5 rounded-lg border border-outline-variant space-y-3">
+                  <div className="flex items-center gap-2.5">
+                    {currentUser.photoURL ? (
+                      <img src={currentUser.photoURL} alt="Avatar" className="w-8 h-8 rounded-full border border-outline-variant" />
+                    ) : (
+                      <UserIcon className="w-8 h-8 text-primary p-1 bg-primary/10 rounded-full" />
+                    )}
+                    <div className="overflow-hidden">
+                      <span className="text-xs font-bold text-on-surface block truncate">{currentUser.displayName || 'Usuário Conectado'}</span>
+                      <span className="text-[11px] text-on-surface-variant font-mono truncate block">{currentUser.email}</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-outline-variant flex justify-between items-center text-[11px] font-mono">
+                    <span className="text-emerald-400 flex items-center gap-1 font-semibold">
+                      <Lock className="w-3.5 h-3.5" /> Sincronização ativa
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="text-on-surface-variant hover:text-error flex items-center gap-1 cursor-pointer"
+                    >
+                      <LogOut className="w-3 h-3" /> Desconectar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-surface-container p-3.5 rounded-lg border border-outline-variant space-y-3">
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-on-surface-variant">Modo atual:</span>
+                    <span className="text-amber-400 font-bold flex items-center gap-1">
+                      <Lock className="w-3.5 h-3.5" /> Sessão Local Isolada
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant">
+                    Para sincronizar seus orçamentos entre diferentes computadores e celulares, conecte sua conta Google:
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    disabled={isAuthenticating}
+                    className="w-full py-2.5 px-3 bg-surface-container-highest hover:bg-surface-bright border border-outline-variant rounded-lg text-xs font-semibold text-on-surface flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <LogIn className="w-4 h-4 text-primary" />
+                    <span>{isAuthenticating ? 'Conectando...' : 'Conectar com Google'}</span>
+                  </button>
+                </div>
+              )}
             </div>
           </section>
 

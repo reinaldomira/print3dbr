@@ -1,7 +1,8 @@
-import { db } from '../lib/firebase';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { db, auth, subscribeToAuth, handleFirestoreError, OperationType } from '../lib/firebase';
+import { doc, getDoc, setDoc, onSnapshot, Unsubscribe } from 'firebase/firestore';
 
 export interface SystemSettings {
+  ownerUid?: string;
   nomeEmpresa: string;
   subtituloEmpresa: string;
   logotipoUrl: string;
@@ -18,12 +19,11 @@ export interface SystemSettings {
   comissaoMarketplacePadrao: number;
   embalagemPadrao: number;
   outrosCustosPadrao: number;
-  margemLucroPadrao: number;
+  margemLucroPadrao: number; // % sobre o custo (markup)
   arredondamentoComercialPadrao?: boolean;
 }
 
 const SETTINGS_KEY = 'print3dbr_settings';
-const SETTINGS_DOC_REF = doc(db, 'settings', 'global');
 
 export const DEFAULT_SETTINGS: SystemSettings = {
   nomeEmpresa: 'Print_3dbr',
@@ -45,41 +45,70 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   arredondamentoComercialPadrao: false
 };
 
-let isSettingsInitialized = false;
+let activeSettingsUnsub: Unsubscribe | null = null;
+let currentSettingsUid: string | null = null;
 
-function initSettingsListener() {
-  if (isSettingsInitialized) return;
-  isSettingsInitialized = true;
+function setupSettingsListener(uid: string | null) {
+  if (activeSettingsUnsub && currentSettingsUid === uid) {
+    return;
+  }
+
+  if (activeSettingsUnsub) {
+    activeSettingsUnsub();
+    activeSettingsUnsub = null;
+  }
+
+  currentSettingsUid = uid;
+
+  if (!uid) {
+    return;
+  }
 
   try {
-    onSnapshot(SETTINGS_DOC_REF, (snap) => {
+    const userDocRef = doc(db, 'settings', uid);
+    activeSettingsUnsub = onSnapshot(userDocRef, (snap) => {
+      const local = getStoredSettings();
       if (!snap.exists()) {
-        // Seed default settings to Firestore
-        setDoc(SETTINGS_DOC_REF, DEFAULT_SETTINGS).catch(err => {
-          console.error('Error seeding default settings to Firestore:', err);
+        // Inicializa as configurações do usuário na nuvem preservando o estado local
+        const initialData: SystemSettings = {
+          ...local,
+          ownerUid: uid
+        };
+        const sanitized = { ...initialData };
+        if (sanitized.logotipoUrl && sanitized.logotipoUrl.length > 500000) {
+          sanitized.logotipoUrl = '';
+        }
+        setDoc(userDocRef, sanitized).catch(err => {
+          handleFirestoreError(err, OperationType.CREATE, `settings/${uid}`);
         });
         return;
       }
 
-      const data = snap.data() as SystemSettings;
-      const local = getStoredSettings();
-      // Preserve local logo if Firestore payload stripped it for size
-      const merged = { 
+      const remoteData = snap.data() as SystemSettings;
+      const merged: SystemSettings = { 
         ...DEFAULT_SETTINGS, 
-        ...data,
-        logotipoUrl: data.logotipoUrl || local.logotipoUrl || ''
+        ...remoteData,
+        ownerUid: uid,
+        logotipoUrl: remoteData.logotipoUrl || local.logotipoUrl || ''
       };
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
       window.dispatchEvent(new CustomEvent('settingsUpdated', { detail: merged }));
     }, (error) => {
-      console.error('Firestore settings listener error:', error);
+      handleFirestoreError(error, OperationType.GET, `settings/${uid}`);
     });
   } catch (err) {
-    console.error('Error initializing settings listener:', err);
+    handleFirestoreError(err, OperationType.GET, `settings/${uid}`);
   }
 }
 
-initSettingsListener();
+// Observa mudanças de autenticação para chavear o documento de configurações
+subscribeToAuth((user) => {
+  if (user) {
+    setupSettingsListener(user.uid);
+  } else {
+    setupSettingsListener(null);
+  }
+});
 
 export function getStoredSettings(): SystemSettings {
   try {
@@ -96,20 +125,31 @@ export function getStoredSettings(): SystemSettings {
 }
 
 export function saveStoredSettings(newSettings: SystemSettings): SystemSettings {
-  const merged = { ...DEFAULT_SETTINGS, ...newSettings };
+  const currentUid = auth.currentUser?.uid;
+  const merged: SystemSettings = { 
+    ...DEFAULT_SETTINGS, 
+    ...newSettings,
+    ...(currentUid ? { ownerUid: currentUid } : {})
+  };
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
   window.dispatchEvent(new CustomEvent('settingsUpdated', { detail: merged }));
 
-  // Sanitize for Firestore write to guarantee avoiding 1MB limit
-  const firestoreSettings = { ...merged };
-  if (firestoreSettings.logotipoUrl && firestoreSettings.logotipoUrl.length > 500000) {
-    console.warn('logotipoUrl too large for Firestore document limit (>500KB). Keeping locally.');
-    firestoreSettings.logotipoUrl = '';
-  }
+  // Grava no documento do usuário autenticado no Firestore se disponível
+  if (currentUid) {
+    try {
+      const firestoreSettings = { ...merged };
+      if (firestoreSettings.logotipoUrl && firestoreSettings.logotipoUrl.length > 500000) {
+        firestoreSettings.logotipoUrl = '';
+      }
 
-  setDoc(SETTINGS_DOC_REF, firestoreSettings).catch(err => {
-    console.error('Error saving settings to Firestore:', err);
-  });
+      const userDocRef = doc(db, 'settings', currentUid);
+      setDoc(userDocRef, firestoreSettings).catch(err => {
+        handleFirestoreError(err, OperationType.WRITE, `settings/${currentUid}`);
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `settings/${currentUid}`);
+    }
+  }
 
   return merged;
 }

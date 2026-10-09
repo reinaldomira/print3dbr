@@ -33,7 +33,7 @@ export interface PricingBreakdown {
   embalagem: number;
   outrosCustos: number;
   custoBase: number;
-  margemLucro: number;
+  margemLucro: number; // % sobre o custo (markup)
   lucroDesejado: number;
   subtotalNecessario: number;
   totalTaxasPercentual: number;
@@ -43,9 +43,14 @@ export interface PricingBreakdown {
   taxaPagamentoValor: number;
   marketplacePercentual: number;
   marketplaceValor: number;
-  precoVenda: number;
-  lucroLiquido: number;
-  margemEfetiva: number;
+  totalTaxasValor?: number;
+  precoBaseVenda?: number;
+  descontoValor?: number;
+  descontoPercentual?: number;
+  precoVenda: number; // Preço final cobrado
+  lucroLiquido: number; // Real, pode ser negativo se houver prejuízo
+  margemEfetiva: number; // % sobre o valor final cobrado (venda)
+  lucroSobreCustoEfetivo?: number; // % sobre o custo base
   erro?: string;
 }
 
@@ -63,5 +68,6 @@ export interface Pedido {
   status?: PedidoStatus;
   custosFinanceiros?: FinancialConfig;
   detalhesPrecificacao?: PricingBreakdown;
+  ownerUid?: string; // UID do usuário autenticado no Firebase
 }
 

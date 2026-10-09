@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { X, Save, User, Phone, Calendar, CreditCard, Plus, Trash2, Camera, FileText, Check, AlertCircle, Tag, Percent } from 'lucide-react';
-import { Pedido, PedidoItem, PedidoStatus } from '../types';
+import { Pedido, PedidoItem, PedidoStatus, PricingBreakdown } from '../types';
 import { STATUS_LIST } from '../utils/statusUtils';
 import { updatePedido } from '../utils/ordersStorage';
+import { calculateSalePrice } from '../utils/pricingCalculator';
 
 interface EditPedidoModalProps {
   pedido: Pedido;
@@ -135,6 +136,32 @@ export function EditPedidoModal({ pedido, onClose, onSave }: EditPedidoModalProp
       ? Number(descontoPercentual) || 0
       : (subtotalCalculado > 0 ? Number(((descontoValorFixo / subtotalCalculado) * 100).toFixed(1)) : 0);
 
+    let detalhesPrecificacao: PricingBreakdown | undefined = pedido.detalhesPrecificacao;
+    if (pedido.custosFinanceiros) {
+      const breakdown = calculateSalePrice({
+        custoProducao: itensValidos.reduce((acc, it) => acc + (Number(it.qtd) || 0) * (Number(it.valorUnitario) || 0), 0),
+        embalagem: pedido.custosFinanceiros.embalagem,
+        outrosCustos: pedido.custosFinanceiros.outrosCustos,
+        imposto: pedido.custosFinanceiros.imposto,
+        taxaPagamento: pedido.custosFinanceiros.taxaPagamento,
+        comissaoMarketplace: pedido.custosFinanceiros.comissaoMarketplace,
+        margemLucro: pedido.custosFinanceiros.margemLucro,
+        tipoDesconto,
+        descontoPercentual: tipoDesconto === 'porcentagem' ? (Number(descontoPercentual) || 0) : undefined,
+        descontoValorFixo: tipoDesconto === 'valor' ? (Number(descontoValorFixo) || 0) : undefined
+      });
+      detalhesPrecificacao = {
+        ...breakdown,
+        lucroLiquido: breakdown.lucroLiquido,
+        margemEfetiva: breakdown.margemEfetiva,
+        precoVenda: totalCalculado,
+        precoBaseVenda: subtotalCalculado,
+        descontoValor: Number(valorDescontoCalculado.toFixed(2)),
+        descontoPercentual: pct,
+        totalTaxasValor: breakdown.totalTaxasValor
+      };
+    }
+
     const pedidoAtualizado: Pedido = {
       ...pedido,
       cliente: cliente.trim(),
@@ -143,7 +170,7 @@ export function EditPedidoModal({ pedido, onClose, onSave }: EditPedidoModalProp
       metodoPagamento,
       status,
       observacoes: observacoes.trim(),
-      desconto: Number(valorDescontoCalculado.toFixed(2)),
+      desconto: valorDescontoCalculado > 0 ? Number(valorDescontoCalculado.toFixed(2)) : undefined,
       descontoPercentual: pct > 0 ? pct : undefined,
       itens: itensValidos.map(i => {
         const item: PedidoItem = {
@@ -157,7 +184,8 @@ export function EditPedidoModal({ pedido, onClose, onSave }: EditPedidoModalProp
         }
         return item;
       }),
-      total: totalCalculado
+      total: totalCalculado,
+      detalhesPrecificacao
     };
 
     try {

@@ -2,11 +2,40 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /pedidos/{pedidoId} {
-      allow read, write: if true;
+
+    // Bloqueia qualquer acesso irrestrito por padrão (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
     }
+
+    // Pedidos e Orçamentos: Somente o proprietário autenticado pode acessar
+    match /pedidos/{pedidoId} {
+      // Leitura individual de documento: apenas se o documento pertencer ao usuário autenticado
+      allow get: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      
+      // Listagem / consultas: apenas consultas formuladas com where('ownerUid', '==', request.auth.uid)
+      allow list: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      
+      // Criação: exige que o novo documento defina o ownerUid igual ao UID autenticado
+      allow create: if request.auth != null 
+        && request.resource.data.ownerUid == request.auth.uid;
+      
+      // Edição: apenas o proprietário pode editar e o campo ownerUid permanece inalterado
+      allow update: if request.auth != null 
+        && resource.data.ownerUid == request.auth.uid 
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      
+      // Exclusão: apenas o proprietário pode excluir
+      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Configurações: Cada usuário acessa suas próprias configurações isoladas por UID ou ownerUid
     match /settings/{settingId} {
-      allow read, write: if true;
+      allow get: if request.auth != null && (settingId == request.auth.uid || resource.data.ownerUid == request.auth.uid);
+      allow list: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow create: if request.auth != null && (settingId == request.auth.uid || request.resource.data.ownerUid == request.auth.uid);
+      allow update: if request.auth != null && (settingId == request.auth.uid || resource.data.ownerUid == request.auth.uid);
+      allow delete: if request.auth != null && (settingId == request.auth.uid || resource.data.ownerUid == request.auth.uid);
     }
   }
 }

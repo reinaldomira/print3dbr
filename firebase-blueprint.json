@@ -8,23 +8,27 @@
       "params": [],
       "fields": {
         "id": { "type": "string", "description": "ID do pedido ex: #000042" },
+        "ownerUid": { "type": "string", "description": "UID do usuário proprietário autenticado" },
         "cliente": { "type": "string", "description": "Nome do cliente" },
         "telefone": { "type": "string", "description": "Telefone do cliente" },
         "data": { "type": "string", "description": "Data de emissão" },
-        "total": { "type": "number", "description": "Valor total" },
+        "total": { "type": "number", "description": "Valor total cobrado" },
+        "desconto": { "type": "number", "description": "Valor de desconto em R$" },
+        "descontoPercentual": { "type": "number", "description": "Percentual de desconto" },
         "metodoPagamento": { "type": "string", "description": "Método de pagamento" },
-        "status": { "type": "string", "description": "Status: pendente ou aprovado" },
+        "status": { "type": "string", "description": "Status da peça / pedido" },
         "observacoes": { "type": "string", "description": "Observações do pedido" },
         "itens": { "type": "array", "description": "Lista de itens do pedido" }
       }
     },
     "settings": {
       "title": "Configurações do Sistema",
-      "description": "Configurações globais da empresa",
+      "description": "Configurações personalizadas da empresa por usuário",
       "type": "doc",
-      "path": "settings/global",
-      "params": [],
+      "path": "settings/{userId}",
+      "params": ["userId"],
       "fields": {
+        "ownerUid": { "type": "string", "description": "UID do usuário proprietário" },
         "nomeEmpresa": { "type": "string" },
         "subtituloEmpresa": { "type": "string" },
         "logotipoUrl": { "type": "string" },
@@ -34,7 +38,14 @@
         "chavePix": { "type": "string" },
         "corPrincipal": { "type": "string" },
         "mensagemRodape": { "type": "string" },
-        "observacoesPadrao": { "type": "string" }
+        "observacoesPadrao": { "type": "string" },
+        "impostoPadrao": { "type": "number" },
+        "taxaPagamentoPadrao": { "type": "number" },
+        "comissaoMarketplacePadrao": { "type": "number" },
+        "embalagemPadrao": { "type": "number" },
+        "outrosCustosPadrao": { "type": "number" },
+        "margemLucroPadrao": { "type": "number" },
+        "arredondamentoComercialPadrao": { "type": "boolean" }
       }
     }
   }

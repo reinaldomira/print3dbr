@@ -36,8 +36,8 @@ interface NovaNotaProps {
 }
 
 export function NovaNota({ onNavigate }: NovaNotaProps) {
-  const [cliente, setCliente] = useState('Ricardo Mendes da Silva');
-  const [telefone, setTelefone] = useState('(47) 99912-4455');
+  const [cliente, setCliente] = useState('');
+  const [telefone, setTelefone] = useState('');
   const [observacoes, setObservacoes] = useState('');
   const [metodoPagamento, setMetodoPagamento] = useState<'pix' | 'cartao' | 'dinheiro' | 'outro'>('pix');
   const [statusInicial, setStatusInicial] = useState<PedidoStatus>('na_fila');
@@ -80,18 +80,16 @@ export function NovaNota({ onNavigate }: NovaNotaProps) {
     return () => window.removeEventListener('settingsUpdated', loadSettings);
   }, []);
 
-  // Itens do Pedido (custo de produção unitário de cada peça)
+  // Itens do Pedido começam sem dados fictícios
   const [itens, setItens] = useState<PedidoItem[]>([
-    { id: crypto.randomUUID(), descricao: 'Suporte Articulado para Câmera', qtd: 2, valorUnitario: 45.00 },
-    { id: crypto.randomUUID(), descricao: 'Engrenagem V2 - Projeto Mecânico', qtd: 1, valorUnitario: 120.00 },
-    { id: crypto.randomUUID(), descricao: 'Capa Protetora Sensor Industrial', qtd: 5, valorUnitario: 18.50 },
+    { id: crypto.randomUUID(), descricao: '', qtd: 1, valorUnitario: 0.00 }
   ]);
 
   // Custo de produção = soma dos itens
   const custoProducao = itens.reduce((acc, item) => acc + (item.qtd * item.valorUnitario), 0);
   const totalPecas = itens.reduce((acc, item) => acc + (Number(item.qtd) || 1), 0);
 
-  // Executa o cálculo central de precificação
+  // Executa o cálculo central de precificação integrando formação de preço e desconto comercial
   const pricing = useMemo(() => {
     return calculateSalePrice({
       custoProducao,
@@ -100,30 +98,30 @@ export function NovaNota({ onNavigate }: NovaNotaProps) {
       imposto,
       taxaPagamento,
       comissaoMarketplace,
-      margemLucro
+      margemLucro,
+      tipoDesconto,
+      descontoPercentual,
+      descontoValorFixo
     });
-  }, [custoProducao, embalagem, outrosCustos, imposto, taxaPagamento, comissaoMarketplace, margemLucro]);
+  }, [custoProducao, embalagem, outrosCustos, imposto, taxaPagamento, comissaoMarketplace, margemLucro, tipoDesconto, descontoPercentual, descontoValorFixo]);
 
-  const totalTaxas = Number((imposto + taxaPagamento + comissaoMarketplace).toFixed(2));
+  const totalTaxas = pricing.totalTaxasPercentual;
   const isTaxError = totalTaxas >= 100;
 
   // Preço de venda base antes do desconto comercial
-  const precoBaseVenda = pricing.precoVenda;
+  const precoBaseVenda = pricing.precoBaseVenda;
 
-  // Desconto comercial (se aplicado)
-  const valorDesconto = tipoDesconto === 'porcentagem'
-    ? (precoBaseVenda * (descontoPercentual || 0)) / 100
-    : (descontoValorFixo || 0);
+  // Desconto comercial calculado pelo motor
+  const valorDesconto = pricing.descontoValor;
 
   // Preço final cobrado do cliente
-  const totalFinal = Math.max(0, precoBaseVenda - valorDesconto);
+  const totalFinal = pricing.totalFinal;
   const precoUnitarioMedio = totalPecas > 0 ? (totalFinal / totalPecas) : 0;
 
-  // Lucro líquido real ajustado caso haja desconto comercial concedido
-  const lucroLiquidoReal = Math.max(0, pricing.lucroLiquido - valorDesconto);
-  const margemEfetivaReal = pricing.custoBase > 0 
-    ? Number(((lucroLiquidoReal / pricing.custoBase) * 100).toFixed(1)) 
-    : pricing.margemLucro;
+  // Lucro líquido real (sem limitação a zero: reflete prejuízo se o desconto for excessivo)
+  const lucroLiquidoReal = pricing.lucroLiquido;
+  // Margem efetiva sobre a venda (base: total final cobrado)
+  const margemEfetivaReal = pricing.margemEfetiva;
 
   const handleAddItem = () => {
     setItens([...itens, { id: crypto.randomUUID(), descricao: '', qtd: 1, valorUnitario: 0.00 }]);
@@ -222,12 +220,10 @@ export function NovaNota({ onNavigate }: NovaNotaProps) {
     const hoje = new Date();
     const dataFormatada = hoje.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }) + ' - ' + hoje.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     
-    const pct = tipoDesconto === 'porcentagem'
-      ? Number(descontoPercentual) || 0
-      : (precoBaseVenda > 0 ? Number(((descontoValorFixo / precoBaseVenda) * 100).toFixed(1)) : 0);
+    const pct = pricing.descontoPercentual;
 
-    // Ajusta o valor unitário dos itens para o valor de venda ao cliente no comprovante
-    const fatorVenda = custoProducao > 0 ? (totalFinal / custoProducao) : 1;
+    // Ajusta o valor unitário dos itens para o valor de venda de tabela ao cliente no comprovante (antes do desconto comercial)
+    const fatorVenda = custoProducao > 0 ? (pricing.precoBaseVenda / custoProducao) : 1;
     const itensComPrecoVenda = itens.map(item => ({
       ...item,
       valorUnitario: Number((item.valorUnitario * fatorVenda).toFixed(2))
@@ -244,23 +240,27 @@ export function NovaNota({ onNavigate }: NovaNotaProps) {
 
     const detalhesPrecificacao: PricingBreakdown = {
       ...pricing,
-      lucroLiquido: lucroLiquidoReal,
-      margemEfetiva: margemEfetivaReal,
-      precoVenda: totalFinal
+      lucroLiquido: pricing.lucroLiquido,
+      margemEfetiva: pricing.margemEfetiva,
+      precoVenda: pricing.totalFinal,
+      precoBaseVenda: pricing.precoBaseVenda,
+      descontoValor: pricing.descontoValor,
+      descontoPercentual: pricing.descontoPercentual,
+      totalTaxasValor: pricing.totalTaxasValor
     };
 
     const novoPedido: Pedido = {
       id: `#${Math.floor(100000 + Math.random() * 900000)}`,
-      cliente: cliente || 'Cliente',
-      telefone: telefone || '',
+      cliente: cliente.trim() || 'Cliente',
+      telefone: telefone.trim(),
       itens: itensComPrecoVenda,
       observacoes,
       metodoPagamento,
       status: statusInicial,
       data: dataFormatada,
-      desconto: Number(valorDesconto.toFixed(2)),
+      desconto: pricing.descontoValor > 0 ? pricing.descontoValor : undefined,
       descontoPercentual: pct > 0 ? pct : undefined,
-      total: Number(totalFinal.toFixed(2)),
+      total: pricing.totalFinal,
       custosFinanceiros,
       detalhesPrecificacao
     };
@@ -613,11 +613,11 @@ export function NovaNota({ onNavigate }: NovaNotaProps) {
                     <span className="text-[10px] text-on-surface-variant mt-0.5">Custos extras deste pedido</span>
                   </div>
 
-                  {/* Margem de lucro desejada */}
+                  {/* Lucro sobre o custo (markup) */}
                   <div className="flex flex-col gap-1 bg-primary/5 p-3 rounded-lg border border-primary/30">
                     <div className="flex justify-between items-center">
-                      <label className="text-xs font-mono font-bold text-primary">Margem de lucro</label>
-                      <span className="text-[10px] text-primary font-mono font-bold">% lucro</span>
+                      <label className="text-xs font-mono font-bold text-primary">Lucro sobre o custo</label>
+                      <span className="text-[10px] text-primary font-mono font-bold">% sobre custo</span>
                     </div>
                     <div className="relative mt-1">
                       <input 
@@ -632,7 +632,7 @@ export function NovaNota({ onNavigate }: NovaNotaProps) {
                       />
                       <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-mono text-primary font-bold">%</span>
                     </div>
-                    <span className="text-[10px] text-on-surface-variant mt-0.5">Margem desejada sobre os custos</span>
+                    <span className="text-[10px] text-on-surface-variant mt-0.5">Percentual aplicado sobre os custos para formar o preço</span>
                   </div>
                 </div>
 
@@ -806,21 +806,42 @@ export function NovaNota({ onNavigate }: NovaNotaProps) {
               )}
             </div>
 
-            {/* SEÇÃO 11: INDICADOR DE LUCRO LÍQUIDO */}
-            <div className="bg-primary/10 border border-primary/30 rounded-lg p-3.5 mb-4 flex items-center justify-between">
-              <div>
-                <span className="text-[11px] font-mono text-on-surface-variant uppercase tracking-wider block">
-                  Lucro líquido estimado
+            {/* SEÇÃO 11: INDICADOR DE LUCRO LÍQUIDO OU PREJUÍZO REAL */}
+            {lucroLiquidoReal < 0 && (
+              <div className="p-2.5 mb-3 rounded-lg bg-red-950/40 border border-red-500/40 text-red-300 text-xs font-mono flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>
+                  <strong>Atenção:</strong> O desconto aplicado gera prejuízo real de <strong>R$ {formatCurrency(Math.abs(lucroLiquidoReal))}</strong>.
                 </span>
-                <span className="text-xl font-bold font-mono text-primary">
+              </div>
+            )}
+
+            <div className={`rounded-lg p-3.5 mb-4 flex items-center justify-between border ${
+              lucroLiquidoReal < 0 
+                ? 'bg-red-500/10 border-red-500/40 text-red-400' 
+                : 'bg-primary/10 border-primary/30 text-primary'
+            }`}>
+              <div>
+                <span className={`text-[11px] font-mono uppercase tracking-wider block ${
+                  lucroLiquidoReal < 0 ? 'text-red-400 font-bold' : 'text-on-surface-variant'
+                }`}>
+                  {lucroLiquidoReal < 0 ? 'Prejuízo líquido real' : 'Lucro líquido estimado'}
+                </span>
+                <span className={`text-xl font-bold font-mono ${lucroLiquidoReal < 0 ? 'text-red-400' : 'text-primary'}`}>
                   R$ {formatCurrency(lucroLiquidoReal)}
                 </span>
               </div>
               <div className="text-right">
-                <span className="text-[10px] font-mono text-on-surface-variant uppercase tracking-wider block">
-                  Margem Líquida
+                <span className={`text-[10px] font-mono uppercase tracking-wider block ${
+                  lucroLiquidoReal < 0 ? 'text-red-400 font-bold' : 'text-on-surface-variant'
+                }`}>
+                  {lucroLiquidoReal < 0 ? 'Margem negativa' : 'Margem sobre venda'}
                 </span>
-                <span className="text-sm font-bold font-mono px-2 py-0.5 rounded bg-primary/20 text-primary border border-primary/30 inline-block">
+                <span className={`text-sm font-bold font-mono px-2 py-0.5 rounded border inline-block ${
+                  lucroLiquidoReal < 0 
+                    ? 'bg-red-500/20 text-red-300 border-red-500/40' 
+                    : 'bg-primary/20 text-primary border-primary/30'
+                }`}>
                   Margem: {margemEfetivaReal}%
                 </span>
               </div>
@@ -1136,7 +1157,7 @@ function ModalSimularPreco({
           </div>
 
           <div className="flex flex-col gap-1 bg-primary/10 p-3 rounded-lg border border-primary/30">
-            <label className="text-xs font-mono font-bold text-primary">Margem Desejada (%)</label>
+            <label className="text-xs font-mono font-bold text-primary">Lucro sobre o custo (%)</label>
             <input 
               type="number"
               min="1"
@@ -1146,7 +1167,7 @@ function ModalSimularPreco({
               onChange={(e) => setSimMargem(sanitizeNumeric(e.target.value, 40))}
               className="bg-surface-container-highest border border-primary/40 rounded px-2.5 py-1.5 text-xs font-mono font-bold text-on-surface"
             />
-            <span className="text-[10px] text-primary font-mono">Sobre os custos</span>
+            <span className="text-[10px] text-primary font-mono">Markup sobre custos</span>
           </div>
         </div>
 
@@ -1180,9 +1201,12 @@ function ModalSimularPreco({
                 </span>
               </div>
               <div className="text-right">
-                <span className="text-[10px] font-mono text-on-surface-variant block uppercase">LUCRO LÍQUIDO</span>
+                <span className="text-[10px] font-mono text-on-surface-variant block uppercase">LUCRO LÍQUIDO REAL</span>
                 <span className="text-base font-bold font-mono text-primary">
-                  R$ {formatCurrency(result.lucroLiquido)} ({result.margemEfetiva}%)
+                  R$ {formatCurrency(result.lucroLiquido)}
+                </span>
+                <span className="text-[10px] font-mono text-on-surface-variant block">
+                  Margem sobre a venda: <strong>{result.margemEfetiva}%</strong>
                 </span>
               </div>
             </div>

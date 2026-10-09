@@ -1,5 +1,6 @@
 import { Pedido, PedidoStatus } from '../types';
-import { db } from '../lib/firebase';
+import { db, auth, subscribeToAuth, handleFirestoreError, OperationType, GoogleAuthResult } from '../lib/firebase';
+import { buildMigrationPlan } from './migrationHelper';
 import { 
   collection, 
   doc, 
@@ -10,7 +11,8 @@ import {
   writeBatch,
   query,
   where,
-  getDocs
+  getDocs,
+  Unsubscribe
 } from 'firebase/firestore';
 
 const STORAGE_KEY = 'print3dbr_pedidos';
@@ -109,8 +111,14 @@ function getDocId(orderId: string): string {
 }
 
 /**
- * Recursively removes undefined fields and cleans objects/arrays for Firestore.
- * Firestore throws an immediate synchronous error if any property value is undefined.
+ * Retorna o UID do proprietário ativo (autenticado no Firebase ou fallback temporário).
+ */
+export function getCurrentOwnerUid(): string {
+  return auth.currentUser?.uid || 'anonymous';
+}
+
+/**
+ * Remove recursivamente propriedades undefined e higieniza dados para o Firestore.
  */
 export function sanitizeForFirestore<T>(data: T): T {
   if (data === null || data === undefined) {
@@ -131,33 +139,131 @@ export function sanitizeForFirestore<T>(data: T): T {
   return data;
 }
 
-let isInitialized = false;
+let activeUnsubscribe: Unsubscribe | null = null;
+let currentSubscribedUid: string | null = null;
+let isMigrationInProgress = false;
 
-// Subscribe to Firestore changes in real-time
-function initFirestoreListener() {
-  if (isInitialized) return;
-  isInitialized = true;
+/**
+ * Executa a migração segura dos pedidos locais para a conta Google autenticada.
+ * Implementa todas as etapas do protocolo de tolerância a falhas:
+ * 1. Backup do estado local antes de qualquer modificação.
+ * 2. Consulta dos pedidos existentes na conta Google remota.
+ * 3. Planejamento com isolamento de outros usuários e resolução de conflitos sem perdas.
+ * 4. Gravação atômica em lote no Firestore confirmando sucesso.
+ * 5. Atualização do cache local somente após confirmação da nuvem.
+ * 6. Rollback total imediato do estado local em caso de qualquer falha.
+ */
+export async function executeGoogleMigration(authResult: GoogleAuthResult): Promise<{
+  migratedCount: number;
+  conflictsResolvedCount: number;
+  totalCount: number;
+}> {
+  isMigrationInProgress = true;
+  const backupLocalPedidos = [...getStoredPedidos()];
+  const targetUid = authResult.user.uid;
+  const prevAnonUid = authResult.prevAnonUid;
+  const isAnonymous = prevAnonUid !== null;
 
   try {
-    const colRef = collection(db, PEDIDOS_COLLECTION);
-    onSnapshot(colRef, (snapshot) => {
-      const hasSeeded = localStorage.getItem(SEEDED_KEY) === 'true';
+    // 1. Busca pedidos já existentes na nuvem pertencentes à conta Google
+    const q = query(
+      collection(db, PEDIDOS_COLLECTION),
+      where('ownerUid', '==', targetUid)
+    );
+    const remoteSnapshot = await getDocs(q);
+    const remotePedidos: Pedido[] = [];
+    remoteSnapshot.forEach(docSnap => {
+      const data = docSnap.data() as Pedido;
+      const orderId = data.id || docSnap.id;
+      docIdMap[orderId] = docSnap.id;
+      remotePedidos.push({
+        ...data,
+        id: orderId,
+        ownerUid: targetUid,
+        status: data.status || 'aprovado'
+      });
+    });
 
-      if (snapshot.empty) {
-        if (!hasSeeded) {
-          localStorage.setItem(SEEDED_KEY, 'true');
-          seedInitialOrders();
-          return;
-        } else {
-          // Intentionally empty state
-          localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
-          window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: [] }));
-          return;
-        }
+    // 2. Constrói o plano de migração com isolamento e preservação
+    const plan = buildMigrationPlan({
+      localOrders: backupLocalPedidos,
+      remoteOrders: remotePedidos,
+      prevAnonUid,
+      targetUid,
+      linkedInPlace: authResult.linkedInPlace,
+      isAnonymous
+    });
+
+    // 3. Grava no Firestore os pedidos novos ou com conflito resolvido
+    if (plan.ordersToUpload.length > 0) {
+      const batch = writeBatch(db);
+      for (const order of plan.ordersToUpload) {
+        const targetDocId = `${targetUid}_${getDocId(order.id)}`;
+        docIdMap[order.id] = targetDocId;
+        const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
+        batch.set(docRef, sanitizeForFirestore(order), { merge: true });
       }
+      // Confirmação obrigatória: se a rede cair ou o Firestore falhar, dispara o catch
+      await batch.commit();
+    }
 
-      // Mark as seeded since collection is not empty
-      localStorage.setItem(SEEDED_KEY, 'true');
+    // 4. Confirmação obtida: atualiza o estado local consolidado
+    localStorage.setItem(SEEDED_KEY, 'true');
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(plan.finalMergedOrders));
+    window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: plan.finalMergedOrders }));
+
+    // 5. Atualiza o listener em tempo real para a conta Google ativa
+    setupFirestoreListener(targetUid);
+
+    console.log(`[Print3DBR] Migração concluída com sucesso: ${plan.migratedCount} pedidos enviados, ${plan.conflictsResolvedCount} conflitos preservados.`);
+
+    return {
+      migratedCount: plan.migratedCount,
+      conflictsResolvedCount: plan.conflictsResolvedCount,
+      totalCount: plan.finalMergedOrders.length
+    };
+  } catch (error) {
+    // Tolerância a falhas: restaura os pedidos locais exatamente como estavam antes
+    console.error('[Print3DBR] Erro durante a migração. Restaurando dados locais intactos:', error);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(backupLocalPedidos));
+    window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: backupLocalPedidos }));
+    throw error;
+  } finally {
+    isMigrationInProgress = false;
+  }
+}
+
+/**
+ * Inicia ou atualiza o listener do Firestore filtrando estritamente pelos pedidos do proprietário autenticado.
+ * Não sobrescreve o cache local caso uma migração esteja em andamento.
+ */
+export function setupFirestoreListener(ownerUid: string | null) {
+  if (activeUnsubscribe && currentSubscribedUid === ownerUid) {
+    return;
+  }
+
+  if (activeUnsubscribe) {
+    activeUnsubscribe();
+    activeUnsubscribe = null;
+  }
+
+  currentSubscribedUid = ownerUid;
+
+  if (!ownerUid) {
+    return;
+  }
+
+  try {
+    const q = query(
+      collection(db, PEDIDOS_COLLECTION),
+      where('ownerUid', '==', ownerUid)
+    );
+
+    activeUnsubscribe = onSnapshot(q, (snapshot) => {
+      // Se houver uma migração em curso, o listener não pode atropelar o estado local
+      if (isMigrationInProgress) {
+        return;
+      }
 
       const pedidosFromDb: Pedido[] = [];
       snapshot.forEach(docSnap => {
@@ -168,38 +274,40 @@ function initFirestoreListener() {
         pedidosFromDb.push({
           ...data,
           id: orderId,
+          ownerUid,
           status: data.status || 'aprovado'
         });
       });
 
-      // Update localStorage cache and emit update event
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(pedidosFromDb));
-      window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: pedidosFromDb }));
+      // Se a nuvem retornou documentos, mescla com pedidos locais de outros perfis (se houver)
+      if (!snapshot.empty) {
+        localStorage.setItem(SEEDED_KEY, 'true');
+        const local = getStoredPedidos();
+        const otherUsersOrders = local.filter(p => p.ownerUid && p.ownerUid !== ownerUid);
+        const combined = [...pedidosFromDb, ...otherUsersOrders];
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(combined));
+        window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: combined }));
+      }
     }, (error) => {
-      console.error('Firestore listener error:', error);
+      handleFirestoreError(error, OperationType.LIST, `${PEDIDOS_COLLECTION}?ownerUid=${ownerUid}`);
     });
   } catch (err) {
-    console.error('Error starting Firestore listener:', err);
+    handleFirestoreError(err, OperationType.LIST, PEDIDOS_COLLECTION);
   }
 }
 
-async function seedInitialOrders() {
-  try {
-    const batch = writeBatch(db);
-    INITIAL_ORDERS.forEach(order => {
-      const targetId = getDocId(order.id);
-      docIdMap[order.id] = targetId;
-      const docRef = doc(db, PEDIDOS_COLLECTION, targetId);
-      batch.set(docRef, order);
-    });
-    await batch.commit();
-  } catch (err) {
-    console.error('Error seeding initial orders to Firestore:', err);
+// Observa mudanças de autenticação mantendo o listener sincronizado sem interferir em migrações manuais
+subscribeToAuth((user) => {
+  if (isMigrationInProgress) {
+    return;
   }
-}
-
-// Start listener immediately
-initFirestoreListener();
+  if (user) {
+    setupFirestoreListener(user.uid);
+  } else {
+    setupFirestoreListener(null);
+  }
+});
 
 export function getStoredPedidos(): Pedido[] {
   try {
@@ -227,8 +335,10 @@ export function getStoredPedidos(): Pedido[] {
 }
 
 export function savePedido(novoPedido: Pedido): Pedido[] {
+  const currentUid = getCurrentOwnerUid();
   const pedidoComStatus: Pedido = {
     ...novoPedido,
+    ownerUid: novoPedido.ownerUid || currentUid,
     cliente: novoPedido.cliente || 'Cliente',
     telefone: novoPedido.telefone || '',
     observacoes: novoPedido.observacoes || '',
@@ -248,29 +358,32 @@ export function savePedido(novoPedido: Pedido): Pedido[] {
   const atuais = getStoredPedidos();
   const atualizados = [pedidoComStatus, ...atuais];
 
-  // Optimistic update
+  // Atualização otimista no estado local
   localStorage.setItem(STORAGE_KEY, JSON.stringify(atualizados));
   window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: atualizados }));
 
-  // Firestore update
+  // Gravação no Firestore respeitando ownerUid
   try {
     const sanitized = sanitizeForFirestore(pedidoComStatus);
     const targetDocId = getDocId(pedidoComStatus.id);
     docIdMap[pedidoComStatus.id] = targetDocId;
     const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
+    
     setDoc(docRef, sanitized).catch(err => {
-      console.error('Error saving order to Firestore:', err);
+      handleFirestoreError(err, OperationType.CREATE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
     });
   } catch (err) {
-    console.error('Synchronous error saving order to Firestore:', err);
+    handleFirestoreError(err, OperationType.CREATE, PEDIDOS_COLLECTION);
   }
 
   return atualizados;
 }
 
 export function updatePedido(pedidoAtualizado: Pedido): Pedido[] {
+  const currentUid = getCurrentOwnerUid();
   const pedidoLimpo: Pedido = {
     ...pedidoAtualizado,
+    ownerUid: pedidoAtualizado.ownerUid || currentUid,
     cliente: pedidoAtualizado.cliente || 'Cliente',
     telefone: pedidoAtualizado.telefone || '',
     observacoes: pedidoAtualizado.observacoes || '',
@@ -294,28 +407,37 @@ export function updatePedido(pedidoAtualizado: Pedido): Pedido[] {
     return p;
   });
 
-  // Optimistic update
+  // Atualização otimista
   localStorage.setItem(STORAGE_KEY, JSON.stringify(atualizados));
   window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: atualizados }));
 
-  // Firestore update
+  // Atualização no Firestore
   try {
     const sanitized = sanitizeForFirestore(pedidoLimpo);
     const targetDocId = docIdMap[pedidoLimpo.id] || getDocId(pedidoLimpo.id);
     const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
+    
     setDoc(docRef, sanitized, { merge: true }).catch(err => {
-      console.error('Error updating order in Firestore:', err);
+      handleFirestoreError(err, OperationType.UPDATE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
     });
 
-    // Also query by id field in case of alternate document ID
-    const q = query(collection(db, PEDIDOS_COLLECTION), where('id', '==', pedidoLimpo.id));
-    getDocs(q).then((querySnapshot) => {
-      querySnapshot.forEach((d) => {
-        setDoc(d.ref, sanitized, { merge: true }).catch(console.error);
+    // Atualiza por ID respeitando ownerUid
+    if (auth.currentUser) {
+      const q = query(
+        collection(db, PEDIDOS_COLLECTION),
+        where('id', '==', pedidoLimpo.id),
+        where('ownerUid', '==', auth.currentUser.uid)
+      );
+      getDocs(q).then((querySnapshot) => {
+        querySnapshot.forEach((d) => {
+          setDoc(d.ref, sanitized, { merge: true }).catch(console.error);
+        });
+      }).catch(err => {
+        handleFirestoreError(err, OperationType.LIST, `${PEDIDOS_COLLECTION}/query`);
       });
-    }).catch(console.error);
+    }
   } catch (err) {
-    console.error('Synchronous error updating order in Firestore:', err);
+    handleFirestoreError(err, OperationType.UPDATE, PEDIDOS_COLLECTION);
   }
 
   return atualizados;
@@ -330,24 +452,33 @@ export function updatePedidoStatus(id: string, newStatus: PedidoStatus): Pedido[
     return p;
   });
 
-  // Optimistic update
+  // Atualização otimista
   localStorage.setItem(STORAGE_KEY, JSON.stringify(atualizados));
   window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: atualizados }));
 
-  // Firestore update
-  const targetDocId = docIdMap[id] || getDocId(id);
-  const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
-  updateDoc(docRef, { status: newStatus }).catch(err => {
-    console.error('Error updating status in Firestore:', err);
-  });
-
-  // Also query by id field in case of alternate document ID
-  const q = query(collection(db, PEDIDOS_COLLECTION), where('id', '==', id));
-  getDocs(q).then((querySnapshot) => {
-    querySnapshot.forEach((d) => {
-      updateDoc(d.ref, { status: newStatus }).catch(console.error);
+  // Atualização no Firestore
+  try {
+    const targetDocId = docIdMap[id] || getDocId(id);
+    const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
+    updateDoc(docRef, { status: newStatus }).catch(err => {
+      handleFirestoreError(err, OperationType.UPDATE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
     });
-  }).catch(console.error);
+
+    if (auth.currentUser) {
+      const q = query(
+        collection(db, PEDIDOS_COLLECTION),
+        where('id', '==', id),
+        where('ownerUid', '==', auth.currentUser.uid)
+      );
+      getDocs(q).then((querySnapshot) => {
+        querySnapshot.forEach((d) => {
+          updateDoc(d.ref, { status: newStatus }).catch(console.error);
+        });
+      }).catch(console.error);
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, PEDIDOS_COLLECTION);
+  }
 
   return atualizados;
 }
@@ -358,26 +489,34 @@ export function deletePedido(id: string): Pedido[] {
 
   localStorage.setItem(SEEDED_KEY, 'true');
 
-  // Optimistic update
+  // Atualização otimista
   localStorage.setItem(STORAGE_KEY, JSON.stringify(atualizados));
   window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: atualizados }));
 
-  // Firestore delete by mapped/derived doc ID
-  const targetDocId = docIdMap[id] || getDocId(id);
-  delete docIdMap[id];
-  const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
-  deleteDoc(docRef).catch(err => {
-    console.error('Error deleting order from Firestore:', err);
-  });
-
-  // Also query by 'id' field in case of alternate document ID
-  const q = query(collection(db, PEDIDOS_COLLECTION), where('id', '==', id));
-  getDocs(q).then((querySnapshot) => {
-    querySnapshot.forEach((d) => {
-      deleteDoc(d.ref).catch(console.error);
+  // Exclusão no Firestore
+  try {
+    const targetDocId = docIdMap[id] || getDocId(id);
+    delete docIdMap[id];
+    const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
+    deleteDoc(docRef).catch(err => {
+      handleFirestoreError(err, OperationType.DELETE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
     });
-  }).catch(console.error);
+
+    if (auth.currentUser) {
+      const q = query(
+        collection(db, PEDIDOS_COLLECTION),
+        where('id', '==', id),
+        where('ownerUid', '==', auth.currentUser.uid)
+      );
+      getDocs(q).then((querySnapshot) => {
+        querySnapshot.forEach((d) => {
+          deleteDoc(d.ref).catch(console.error);
+        });
+      }).catch(console.error);
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, PEDIDOS_COLLECTION);
+  }
 
   return atualizados;
 }
-
