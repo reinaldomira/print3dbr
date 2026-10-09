@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "pedidos": {
+      "title": "Pedidos de Venda e Orçamentos",
+      "description": "Lista de pedidos e orçamentos de impressão 3D",
+      "type": "collection",
+      "path": "pedidos",
+      "params": [],
+      "fields": {
+        "id": { "type": "string", "description": "ID do pedido ex: #000042" },
+        "cliente": { "type": "string", "description": "Nome do cliente" },
+        "telefone": { "type": "string", "description": "Telefone do cliente" },
+        "data": { "type": "string", "description": "Data de emissão" },
+        "total": { "type": "number", "description": "Valor total" },
+        "metodoPagamento": { "type": "string", "description": "Método de pagamento" },
+        "status": { "type": "string", "description": "Status: pendente ou aprovado" },
+        "observacoes": { "type": "string", "description": "Observações do pedido" },
+        "itens": { "type": "array", "description": "Lista de itens do pedido" }
+      }
+    },
+    "settings": {
+      "title": "Configurações do Sistema",
+      "description": "Configurações globais da empresa",
+      "type": "doc",
+      "path": "settings/global",
+      "params": [],
+      "fields": {
+        "nomeEmpresa": { "type": "string" },
+        "subtituloEmpresa": { "type": "string" },
+        "logotipoUrl": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "instagram": { "type": "string" },
+        "email": { "type": "string" },
+        "chavePix": { "type": "string" },
+        "corPrincipal": { "type": "string" },
+        "mensagemRodape": { "type": "string" },
+        "observacoesPadrao": { "type": "string" }
+      }
+    }
+  }
+}

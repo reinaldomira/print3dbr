@@ -1,0 +1,6 @@
+{
+  "name": "3DPrint Nota",
+  "description": "Gerador de Comprovante de Venda para serviços de impressão 3D com histórico de pedidos e personalização.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
