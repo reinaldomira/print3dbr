@@ -1,4 +1,15 @@
-export type Tab = 'inicio' | 'nova-nota' | 'pedidos' | 'ajustes';
+export type Tab = 'inicio' | 'nova-nota' | 'pedidos' | 'clientes' | 'ajustes';
+
+export interface Cliente {
+  id: string;
+  nome: string;
+  telefone: string;
+  email?: string;
+  cidade?: string;
+  observacoes?: string;
+  criadoEm: string;
+  ownerUid?: string;
+}
 
 export type PedidoStatus = 
   | 'pendente' 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, PlusCircle, FileText, Settings, Bell, UserCircle, Box } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, FileText, Users, Settings, Bell, UserCircle, Box } from 'lucide-react';
 import { Tab } from '../types';
 import { getStoredSettings, SystemSettings } from '../utils/settingsStorage';
 
@@ -23,6 +23,7 @@ export function Sidebar({ currentTab, setTab }: SidebarProps) {
     { id: 'inicio', label: 'Início', icon: LayoutDashboard },
     { id: 'nova-nota', label: 'Nova Nota', icon: PlusCircle },
     { id: 'pedidos', label: 'Pedidos', icon: FileText },
+    { id: 'clientes', label: 'Clientes', icon: Users },
     { id: 'ajustes', label: 'Ajustes', icon: Settings },
   ] as const;
 

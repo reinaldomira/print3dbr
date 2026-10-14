@@ -37,5 +37,16 @@ service cloud.firestore {
       allow update: if request.auth != null && (settingId == request.auth.uid || resource.data.ownerUid == request.auth.uid);
       allow delete: if request.auth != null && (settingId == request.auth.uid || resource.data.ownerUid == request.auth.uid);
     }
+
+    // Clientes: Somente o proprietário autenticado pode acessar
+    match /clientes/{clienteId} {
+      allow get: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow list: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if request.auth != null 
+        && resource.data.ownerUid == request.auth.uid 
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+    }
   }
 }

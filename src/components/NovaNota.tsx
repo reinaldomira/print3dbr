@@ -22,22 +22,30 @@ import {
   HelpCircle,
   Sparkles,
   ShieldCheck,
-  Check
+  Check,
+  Users,
+  UserCheck,
+  BookmarkPlus
 } from 'lucide-react';
-import { Pedido, PedidoItem, PedidoStatus, Tab, FinancialConfig, PricingBreakdown } from '../types';
+import { Pedido, PedidoItem, PedidoStatus, Tab, FinancialConfig, PricingBreakdown, Cliente } from '../types';
 import { ComprovanteView } from './ComprovanteView';
 import { savePedido } from '../utils/ordersStorage';
 import { getStoredSettings } from '../utils/settingsStorage';
+import { getStoredClientes, saveCliente } from '../utils/clientesStorage';
 import { STATUS_LIST } from '../utils/statusUtils';
 import { calculateSalePrice, sanitizeNumeric } from '../utils/pricingCalculator';
 
 interface NovaNotaProps {
   onNavigate?: (tab: Tab) => void;
+  initialCliente?: { nome: string; telefone: string } | null;
 }
 
-export function NovaNota({ onNavigate }: NovaNotaProps) {
+export function NovaNota({ onNavigate, initialCliente }: NovaNotaProps) {
   const [cliente, setCliente] = useState('');
   const [telefone, setTelefone] = useState('');
+  const [listaClientes, setListaClientes] = useState<Cliente[]>([]);
+  const [mostrarDropdownClientes, setMostrarDropdownClientes] = useState(false);
+  const [clienteSalvoRapido, setClienteSalvoRapido] = useState(false);
   const [observacoes, setObservacoes] = useState('');
   const [metodoPagamento, setMetodoPagamento] = useState<'pix' | 'cartao' | 'dinheiro' | 'outro'>('pix');
   const [statusInicial, setStatusInicial] = useState<PedidoStatus>('na_fila');
@@ -79,6 +87,54 @@ export function NovaNota({ onNavigate }: NovaNotaProps) {
     window.addEventListener('settingsUpdated', loadSettings);
     return () => window.removeEventListener('settingsUpdated', loadSettings);
   }, []);
+
+  // Carrega e atualiza a lista de clientes cadastrados
+  useEffect(() => {
+    const carregarClientes = () => setListaClientes(getStoredClientes());
+    carregarClientes();
+    window.addEventListener('clientesUpdated', carregarClientes);
+    return () => window.removeEventListener('clientesUpdated', carregarClientes);
+  }, []);
+
+  // Preenche dados se vier encaminhado da aba de Clientes
+  useEffect(() => {
+    if (initialCliente) {
+      setCliente(initialCliente.nome);
+      setTelefone(initialCliente.telefone);
+    }
+  }, [initialCliente]);
+
+  const formatarTelefone = (valor: string) => {
+    const apenasDigitos = valor.replace(/\D/g, '').slice(0, 11);
+    if (apenasDigitos.length <= 2) return apenasDigitos;
+    if (apenasDigitos.length <= 7) return `(${apenasDigitos.slice(0, 2)}) ${apenasDigitos.slice(2)}`;
+    if (apenasDigitos.length <= 10) {
+      return `(${apenasDigitos.slice(0, 2)}) ${apenasDigitos.slice(2, 6)}-${apenasDigitos.slice(6)}`;
+    }
+    return `(${apenasDigitos.slice(0, 2)}) ${apenasDigitos.slice(2, 7)}-${apenasDigitos.slice(7, 11)}`;
+  };
+
+  const selecionarClienteExistente = (c: Cliente) => {
+    setCliente(c.nome);
+    setTelefone(c.telefone);
+    setMostrarDropdownClientes(false);
+  };
+
+  const handleSalvarClienteRapido = async () => {
+    if (!cliente.trim() || !telefone.trim()) return;
+    try {
+      await saveCliente({
+        id: crypto.randomUUID(),
+        nome: cliente.trim(),
+        telefone: telefone.trim(),
+        criadoEm: new Date().toISOString()
+      });
+      setClienteSalvoRapido(true);
+      setTimeout(() => setClienteSalvoRapido(false), 3000);
+    } catch (e) {
+      console.error('Erro ao salvar cliente rapidamente:', e);
+    }
+  };
 
   // Itens do Pedido começam sem dados fictícios
   const [itens, setItens] = useState<PedidoItem[]>([
@@ -306,14 +362,69 @@ export function NovaNota({ onNavigate }: NovaNotaProps) {
         {/* Formulário Principal */}
         <div className="lg:col-span-8 space-y-5">
           {/* Dados do Cliente */}
-          <section className="bg-surface border border-outline-variant rounded-lg p-6">
-            <h3 className="text-sm font-medium text-primary mb-4 flex items-center uppercase tracking-wider">
-              <User className="mr-2 w-5 h-5" />
-              Dados do Cliente
-            </h3>
+          <section className="bg-surface border border-outline-variant rounded-lg p-6 relative">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+              <h3 className="text-sm font-medium text-primary flex items-center uppercase tracking-wider">
+                <User className="mr-2 w-5 h-5" />
+                Dados do Cliente
+              </h3>
+
+              {listaClientes.length > 0 && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setMostrarDropdownClientes(!mostrarDropdownClientes)}
+                    className="inline-flex items-center gap-1.5 text-xs bg-surface-container hover:bg-surface-container-high border border-outline-variant text-on-surface px-2.5 py-1.5 rounded transition-colors cursor-pointer"
+                  >
+                    <Users className="w-3.5 h-3.5 text-primary" />
+                    <span>Selecionar cliente salvo ({listaClientes.length})</span>
+                    <ChevronDown className="w-3.5 h-3.5 text-on-surface-variant" />
+                  </button>
+
+                  {mostrarDropdownClientes && (
+                    <div className="absolute right-0 top-full mt-1.5 w-72 max-h-60 overflow-y-auto bg-surface border border-outline-variant rounded-lg shadow-xl z-30 p-1">
+                      <div className="p-1.5 text-[10px] font-mono uppercase text-on-surface-variant border-b border-outline-variant/40">
+                        Clientes Cadastrados
+                      </div>
+                      {listaClientes.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => selecionarClienteExistente(c)}
+                          className="w-full text-left px-2.5 py-2 hover:bg-surface-container rounded flex flex-col gap-0.5 cursor-pointer text-xs transition-colors"
+                        >
+                          <span className="font-semibold text-on-surface truncate">{c.nome}</span>
+                          <span className="text-[11px] text-on-surface-variant font-mono">{c.telefone} {c.cidade ? `• ${c.cidade}` : ''}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="flex flex-col">
-                <label className="text-xs font-mono text-on-surface-variant mb-1">NOME DO CLIENTE</label>
+              <div className="flex flex-col relative">
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs font-mono text-on-surface-variant">NOME DO CLIENTE</label>
+                  {cliente && telefone && !listaClientes.some(c => c.nome.trim().toLowerCase() === cliente.trim().toLowerCase()) && (
+                    clienteSalvoRapido ? (
+                      <span className="text-secondary-container flex items-center gap-1 text-[11px] font-medium">
+                        <Check className="w-3 h-3" /> Salvo!
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSalvarClienteRapido}
+                        className="text-primary hover:underline text-[11px] flex items-center gap-1 cursor-pointer"
+                        title="Cadastrar este contato nos clientes salvos"
+                      >
+                        <BookmarkPlus className="w-3 h-3" />
+                        <span>Salvar cliente</span>
+                      </button>
+                    )
+                  )}
+                </div>
                 <input 
                   className="rounded px-3 py-2 bg-surface-container-highest border border-outline-variant text-sm text-on-surface focus:border-primary-container focus:ring-1 focus:ring-primary-container" 
                   placeholder="Ex: João da Silva" 
@@ -321,15 +432,36 @@ export function NovaNota({ onNavigate }: NovaNotaProps) {
                   value={cliente}
                   onChange={(e) => setCliente(e.target.value)}
                 />
+
+                {/* Sugestões rápidas de cliente ao digitar */}
+                {cliente.length >= 2 && listaClientes.some(c => c.nome.toLowerCase().includes(cliente.toLowerCase()) && c.nome.toLowerCase() !== cliente.toLowerCase()) && (
+                  <div className="mt-1 flex flex-wrap gap-1.5 items-center">
+                    <span className="text-[10px] text-on-surface-variant">Sugeridos:</span>
+                    {listaClientes
+                      .filter(c => c.nome.toLowerCase().includes(cliente.toLowerCase()) && c.nome.toLowerCase() !== cliente.toLowerCase())
+                      .slice(0, 3)
+                      .map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => selecionarClienteExistente(c)}
+                          className="text-[11px] bg-surface-container-high hover:bg-primary-container hover:text-on-primary-container text-on-surface px-2 py-0.5 rounded cursor-pointer transition-colors"
+                        >
+                          {c.nome}
+                        </button>
+                      ))}
+                  </div>
+                )}
               </div>
+
               <div className="flex flex-col">
-                <label className="text-xs font-mono text-on-surface-variant mb-1">TELEFONE</label>
+                <label className="text-xs font-mono text-on-surface-variant mb-1">TELEFONE / WHATSAPP</label>
                 <input 
                   className="rounded px-3 py-2 bg-surface-container-highest border border-outline-variant text-sm text-on-surface focus:border-primary-container focus:ring-1 focus:ring-primary-container font-mono" 
                   placeholder="(00) 00000-0000" 
                   type="text"
                   value={telefone}
-                  onChange={(e) => setTelefone(e.target.value)}
+                  onChange={(e) => setTelefone(formatarTelefone(e.target.value))}
                 />
               </div>
             </div>
