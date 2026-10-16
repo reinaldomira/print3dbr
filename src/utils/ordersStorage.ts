@@ -1,5 +1,14 @@
 import { Pedido, PedidoStatus } from '../types';
-import { db, auth, subscribeToAuth, handleFirestoreError, OperationType, GoogleAuthResult } from '../lib/firebase';
+import { 
+  db, 
+  auth, 
+  subscribeToAuth, 
+  handleFirestoreError, 
+  OperationType, 
+  GoogleAuthResult,
+  setGlobalMigrationInProgress,
+  getGlobalMigrationInProgress
+} from '../lib/firebase';
 import { buildMigrationPlan } from './migrationHelper';
 import { 
   collection, 
@@ -22,92 +31,16 @@ const PEDIDOS_COLLECTION = 'pedidos';
 // Map of order.id -> docSnap.id
 const docIdMap: Record<string, string> = {};
 
-export const INITIAL_ORDERS: Pedido[] = [
-  { 
-    id: '#000042', 
-    cliente: 'Ricardo Mendes da Silva', 
-    telefone: '(47) 99912-4455',
-    data: '22 de Outubro, 2023 - 14:30', 
-    total: 302.50,
-    metodoPagamento: 'pix',
-    status: 'aprovado',
-    observacoes: 'Peças produzidas com precisão de 0.12mm. Recomendado evitar exposição solar direta prolongada para o item em PETG.',
-    itens: [
-      { id: '1', descricao: 'Suporte Articulado para Câmera', qtd: 2, valorUnitario: 45.00 },
-      { id: '2', descricao: 'Engrenagem V2 - Projeto Mecânico', qtd: 1, valorUnitario: 120.00 },
-      { id: '3', descricao: 'Capa Protetora Sensor Industrial', qtd: 5, valorUnitario: 18.50 }
-    ]
-  },
-  { 
-    id: '#10041', 
-    cliente: 'Engenharia 360', 
-    telefone: '(11) 98765-4321',
-    data: '23 de Outubro, 2023 - 10:15', 
-    total: 450.50,
-    metodoPagamento: 'cartao',
-    status: 'aprovado',
-    observacoes: 'Entrega via Sedex.',
-    itens: [
-      { id: '1', descricao: 'Protótipo Caixa Eletrônica', qtd: 1, valorUnitario: 450.50 }
-    ]
-  },
-  { 
-    id: '#10040', 
-    cliente: 'Carlos Almeida Design', 
-    telefone: '(21) 97123-8899',
-    data: '21 de Outubro, 2023 - 16:45', 
-    total: 89.90,
-    metodoPagamento: 'pix',
-    status: 'aprovado',
-    observacoes: 'Filamento Silk Gold',
-    itens: [
-      { id: '1', descricao: 'Vaso Decorativo Espiral', qtd: 1, valorUnitario: 89.90 }
-    ]
-  },
-  { 
-    id: '#10039', 
-    cliente: 'Mecânica Alfa', 
-    telefone: '(41) 99112-0033',
-    data: '19 de Outubro, 2023 - 11:20', 
-    total: 3150.00,
-    metodoPagamento: 'pix',
-    status: 'aprovado',
-    observacoes: 'Lote de 50 buchas de Nylon CF.',
-    itens: [
-      { id: '1', descricao: 'Bucha Industrial Nylon CF', qtd: 50, valorUnitario: 63.00 }
-    ]
-  },
-  { 
-    id: '#10038', 
-    cliente: 'Studio Creativo 3D', 
-    telefone: '(19) 98221-7744',
-    data: '15 de Outubro, 2023 - 09:10', 
-    total: 620.00,
-    metodoPagamento: 'dinheiro',
-    status: 'aprovado',
-    observacoes: 'Impressão em ABS Vermelho com acabamento acetona.',
-    itens: [
-      { id: '1', descricao: 'Maquete Arquitetônica Bloco A', qtd: 2, valorUnitario: 310.00 }
-    ]
-  },
-  { 
-    id: '#10037', 
-    cliente: 'Tech Labs Innovations', 
-    telefone: '(31) 99344-2211',
-    data: '12 de Outubro, 2023 - 18:00', 
-    total: 185.00,
-    metodoPagamento: 'pix',
-    status: 'aprovado',
-    observacoes: 'Suportes para placas de desenvolvimento IoT.',
-    itens: [
-      { id: '1', descricao: 'Case ESP32 Din Rail', qtd: 5, valorUnitario: 37.00 }
-    ]
-  }
-];
-
 // Helper to convert order ID to valid Firestore document ID
 function getDocId(orderId: string): string {
   return orderId.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+/**
+ * Gera um ID de documento único por usuário para evitar colisões no Firestore.
+ */
+export function makeDocId(uid: string, orderId: string): string {
+  return `${uid}_${getDocId(orderId)}`;
 }
 
 /**
@@ -159,6 +92,7 @@ export async function executeGoogleMigration(authResult: GoogleAuthResult): Prom
   totalCount: number;
 }> {
   isMigrationInProgress = true;
+  setGlobalMigrationInProgress(true);
   const backupLocalPedidos = [...getStoredPedidos()];
   const targetUid = authResult.user.uid;
   const prevAnonUid = authResult.prevAnonUid;
@@ -198,7 +132,7 @@ export async function executeGoogleMigration(authResult: GoogleAuthResult): Prom
     if (plan.ordersToUpload.length > 0) {
       const batch = writeBatch(db);
       for (const order of plan.ordersToUpload) {
-        const targetDocId = `${targetUid}_${getDocId(order.id)}`;
+        const targetDocId = docIdMap[order.id] || makeDocId(targetUid, order.id);
         docIdMap[order.id] = targetDocId;
         const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
         batch.set(docRef, sanitizeForFirestore(order), { merge: true });
@@ -209,6 +143,7 @@ export async function executeGoogleMigration(authResult: GoogleAuthResult): Prom
 
     // 4. Confirmação obtida: atualiza o estado local consolidado
     localStorage.setItem(SEEDED_KEY, 'true');
+    localStorage.setItem('print3dbr_last_uid', targetUid);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(plan.finalMergedOrders));
     window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: plan.finalMergedOrders }));
 
@@ -230,6 +165,7 @@ export async function executeGoogleMigration(authResult: GoogleAuthResult): Prom
     throw error;
   } finally {
     isMigrationInProgress = false;
+    setGlobalMigrationInProgress(false);
   }
 }
 
@@ -261,7 +197,7 @@ export function setupFirestoreListener(ownerUid: string | null) {
 
     activeUnsubscribe = onSnapshot(q, (snapshot) => {
       // Se houver uma migração em curso, o listener não pode atropelar o estado local
-      if (isMigrationInProgress) {
+      if (isMigrationInProgress || getGlobalMigrationInProgress()) {
         return;
       }
 
@@ -279,12 +215,15 @@ export function setupFirestoreListener(ownerUid: string | null) {
         });
       });
 
-      // Se a nuvem retornou documentos, mescla com pedidos locais de outros perfis (se houver)
+      // Se a nuvem retornou documentos, atualiza o cache local apenas com os pedidos do usuário autenticado
       if (!snapshot.empty) {
         localStorage.setItem(SEEDED_KEY, 'true');
         const local = getStoredPedidos();
-        const otherUsersOrders = local.filter(p => p.ownerUid && p.ownerUid !== ownerUid);
-        const combined = [...pedidosFromDb, ...otherUsersOrders];
+        // Preserva pedidos locais recém-criados ainda não sincronizados do usuário ativo ou sem ownerUid
+        const unsyncedLocal = local.filter(p => !p.ownerUid || p.ownerUid === ownerUid);
+        const remoteIds = new Set(pedidosFromDb.map(p => p.id));
+        const unsyncedOnly = unsyncedLocal.filter(p => !remoteIds.has(p.id));
+        const combined = [...pedidosFromDb, ...unsyncedOnly];
 
         localStorage.setItem(STORAGE_KEY, JSON.stringify(combined));
         window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: combined }));
@@ -299,7 +238,7 @@ export function setupFirestoreListener(ownerUid: string | null) {
 
 // Observa mudanças de autenticação mantendo o listener sincronizado sem interferir em migrações manuais
 subscribeToAuth((user) => {
-  if (isMigrationInProgress) {
+  if (isMigrationInProgress || getGlobalMigrationInProgress()) {
     return;
   }
   if (user) {
@@ -313,18 +252,31 @@ export function getStoredPedidos(): Pedido[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      const hasSeeded = localStorage.getItem(SEEDED_KEY) === 'true';
-      if (!hasSeeded) {
-        localStorage.setItem(SEEDED_KEY, 'true');
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_ORDERS));
-        return INITIAL_ORDERS;
-      } else {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
-        return [];
-      }
+      return [];
     }
     const parsed: Pedido[] = JSON.parse(raw);
-    return parsed.map(p => ({
+    if (!Array.isArray(parsed)) return [];
+
+    // Se uma migração para conta Google estiver em curso, retorna os pedidos locais para planejar o upload
+    if (isMigrationInProgress || getGlobalMigrationInProgress()) {
+      return parsed.map(p => ({
+        ...p,
+        status: p.status || 'aprovado'
+      }));
+    }
+
+    const currentUid = auth.currentUser?.uid;
+    const filtered = parsed.filter(p => {
+      // Itens locais ainda sem ownerUid devem ser exibidos
+      if (!p.ownerUid) return true;
+      // Se houver usuário autenticado, apenas itens do usuário ativo
+      if (currentUid) {
+        return p.ownerUid === currentUid;
+      }
+      return p.ownerUid === 'anonymous';
+    });
+
+    return filtered.map(p => ({
       ...p,
       status: p.status || 'aprovado'
     }));
@@ -362,18 +314,20 @@ export function savePedido(novoPedido: Pedido): Pedido[] {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(atualizados));
   window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: atualizados }));
 
-  // Gravação no Firestore respeitando ownerUid
-  try {
-    const sanitized = sanitizeForFirestore(pedidoComStatus);
-    const targetDocId = getDocId(pedidoComStatus.id);
-    docIdMap[pedidoComStatus.id] = targetDocId;
-    const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
-    
-    setDoc(docRef, sanitized).catch(err => {
-      handleFirestoreError(err, OperationType.CREATE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
-    });
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, PEDIDOS_COLLECTION);
+  // Gravação no Firestore apenas se houver usuário autenticado
+  if (auth.currentUser) {
+    try {
+      const sanitized = sanitizeForFirestore(pedidoComStatus);
+      const targetDocId = docIdMap[pedidoComStatus.id] || makeDocId(auth.currentUser.uid, pedidoComStatus.id);
+      docIdMap[pedidoComStatus.id] = targetDocId;
+      const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
+      
+      setDoc(docRef, sanitized).catch(err => {
+        handleFirestoreError(err, OperationType.CREATE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, PEDIDOS_COLLECTION);
+    }
   }
 
   return atualizados;
@@ -411,33 +365,20 @@ export function updatePedido(pedidoAtualizado: Pedido): Pedido[] {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(atualizados));
   window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: atualizados }));
 
-  // Atualização no Firestore
-  try {
-    const sanitized = sanitizeForFirestore(pedidoLimpo);
-    const targetDocId = docIdMap[pedidoLimpo.id] || getDocId(pedidoLimpo.id);
-    const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
-    
-    setDoc(docRef, sanitized, { merge: true }).catch(err => {
-      handleFirestoreError(err, OperationType.UPDATE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
-    });
-
-    // Atualiza por ID respeitando ownerUid
-    if (auth.currentUser) {
-      const q = query(
-        collection(db, PEDIDOS_COLLECTION),
-        where('id', '==', pedidoLimpo.id),
-        where('ownerUid', '==', auth.currentUser.uid)
-      );
-      getDocs(q).then((querySnapshot) => {
-        querySnapshot.forEach((d) => {
-          setDoc(d.ref, sanitized, { merge: true }).catch(console.error);
-        });
-      }).catch(err => {
-        handleFirestoreError(err, OperationType.LIST, `${PEDIDOS_COLLECTION}/query`);
+  // Atualização no Firestore apenas se houver usuário autenticado
+  if (auth.currentUser) {
+    try {
+      const sanitized = sanitizeForFirestore(pedidoLimpo);
+      const targetDocId = docIdMap[pedidoLimpo.id] || makeDocId(auth.currentUser.uid, pedidoLimpo.id);
+      docIdMap[pedidoLimpo.id] = targetDocId;
+      const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
+      
+      setDoc(docRef, sanitized, { merge: true }).catch(err => {
+        handleFirestoreError(err, OperationType.UPDATE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
       });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, PEDIDOS_COLLECTION);
     }
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, PEDIDOS_COLLECTION);
   }
 
   return atualizados;
@@ -456,28 +397,18 @@ export function updatePedidoStatus(id: string, newStatus: PedidoStatus): Pedido[
   localStorage.setItem(STORAGE_KEY, JSON.stringify(atualizados));
   window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: atualizados }));
 
-  // Atualização no Firestore
-  try {
-    const targetDocId = docIdMap[id] || getDocId(id);
-    const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
-    updateDoc(docRef, { status: newStatus }).catch(err => {
-      handleFirestoreError(err, OperationType.UPDATE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
-    });
-
-    if (auth.currentUser) {
-      const q = query(
-        collection(db, PEDIDOS_COLLECTION),
-        where('id', '==', id),
-        where('ownerUid', '==', auth.currentUser.uid)
-      );
-      getDocs(q).then((querySnapshot) => {
-        querySnapshot.forEach((d) => {
-          updateDoc(d.ref, { status: newStatus }).catch(console.error);
-        });
-      }).catch(console.error);
+  // Atualização no Firestore apenas se houver usuário autenticado
+  if (auth.currentUser) {
+    try {
+      const targetDocId = docIdMap[id] || makeDocId(auth.currentUser.uid, id);
+      docIdMap[id] = targetDocId;
+      const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
+      updateDoc(docRef, { status: newStatus }).catch(err => {
+        handleFirestoreError(err, OperationType.UPDATE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, PEDIDOS_COLLECTION);
     }
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, PEDIDOS_COLLECTION);
   }
 
   return atualizados;
@@ -493,29 +424,20 @@ export function deletePedido(id: string): Pedido[] {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(atualizados));
   window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: atualizados }));
 
-  // Exclusão no Firestore
-  try {
-    const targetDocId = docIdMap[id] || getDocId(id);
-    delete docIdMap[id];
-    const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
-    deleteDoc(docRef).catch(err => {
-      handleFirestoreError(err, OperationType.DELETE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
-    });
-
-    if (auth.currentUser) {
-      const q = query(
-        collection(db, PEDIDOS_COLLECTION),
-        where('id', '==', id),
-        where('ownerUid', '==', auth.currentUser.uid)
-      );
-      getDocs(q).then((querySnapshot) => {
-        querySnapshot.forEach((d) => {
-          deleteDoc(d.ref).catch(console.error);
-        });
-      }).catch(console.error);
+  // Exclusão no Firestore apenas se houver usuário autenticado
+  if (auth.currentUser) {
+    try {
+      const targetDocId = docIdMap[id] || makeDocId(auth.currentUser.uid, id);
+      delete docIdMap[id];
+      const docRef = doc(db, PEDIDOS_COLLECTION, targetDocId);
+      deleteDoc(docRef).catch(err => {
+        handleFirestoreError(err, OperationType.DELETE, `${PEDIDOS_COLLECTION}/${targetDocId}`);
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, PEDIDOS_COLLECTION);
     }
-  } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, PEDIDOS_COLLECTION);
+  } else {
+    delete docIdMap[id];
   }
 
   return atualizados;

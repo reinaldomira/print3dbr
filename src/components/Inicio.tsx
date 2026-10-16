@@ -336,8 +336,27 @@ export function Inicio({ onNavigate }: InicioProps) {
                    })
                  ) : (
                    <tr>
-                     <td colSpan={6} className="py-8 text-center text-on-surface-variant text-sm">
-                       Nenhum pedido cadastrado ainda.
+                     <td colSpan={6} className="py-12 px-6 text-center">
+                       <div className="flex flex-col items-center justify-center gap-3">
+                         <div className="w-12 h-12 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant border border-outline-variant">
+                           <ShoppingBag className="w-6 h-6 text-primary" />
+                         </div>
+                         <div>
+                           <div className="font-semibold text-on-surface text-base">Nenhum pedido registrado ainda</div>
+                           <div className="text-xs text-on-surface-variant mt-1 max-w-sm mx-auto">
+                             Crie seu primeiro orçamento ou pedido 3D para acompanhar faturamento, métricas e histórico em tempo real.
+                           </div>
+                         </div>
+                         {onNavigate && (
+                           <button
+                             onClick={() => onNavigate('nova-nota')}
+                             className="mt-2 px-4 py-2 bg-primary-container text-on-primary-container hover:bg-primary-fixed rounded-lg text-xs font-bold font-mono flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                           >
+                             <Plus className="w-3.5 h-3.5" />
+                             <span>CRIAR PRIMEIRO PEDIDO</span>
+                           </button>
+                         )}
+                       </div>
                      </td>
                    </tr>
                  )}

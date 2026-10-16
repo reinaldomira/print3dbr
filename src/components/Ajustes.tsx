@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Store, Upload, Contact, MessageCircle, Camera, Mail, Palette, Check, Save, QrCode, RotateCcw, CheckCircle2, Trash2, DollarSign, Percent, TrendingUp, Calculator, AlertTriangle, ShieldCheck, Tag, Lock, LogIn, LogOut, User as UserIcon } from 'lucide-react';
 import { getStoredSettings, saveStoredSettings, DEFAULT_SETTINGS, SystemSettings } from '../utils/settingsStorage';
 import { calculateSalePrice } from '../utils/pricingCalculator';
-import { auth, subscribeToAuth, connectWithGoogle, logoutUser } from '../lib/firebase';
+import { auth, subscribeToAuth, connectWithGoogle, logoutUser, setGlobalMigrationInProgress } from '../lib/firebase';
 import { executeGoogleMigration } from '../utils/ordersStorage';
 import { User } from 'firebase/auth';
 
@@ -49,7 +49,6 @@ export function Ajustes() {
         const maxHeight = 300;
         let width = img.width;
         let height = img.height;
-
         if (width > maxWidth || height > maxHeight) {
           if (width > height) {
             height = Math.round((height * maxWidth) / width);
@@ -104,6 +103,7 @@ export function Ajustes() {
   const handleGoogleSignIn = async () => {
     try {
       setIsAuthenticating(true);
+      setGlobalMigrationInProgress(true);
       const authResult = await connectWithGoogle();
       const migrationRes = await executeGoogleMigration(authResult);
       
@@ -116,6 +116,7 @@ export function Ajustes() {
       setShowSavedToast(true);
       setTimeout(() => setShowSavedToast(false), 4000);
     } catch (err: any) {
+      setGlobalMigrationInProgress(false);
       if (
         err?.code === 'auth/popup-closed-by-user' ||
         err?.code === 'auth/cancelled-popup-request' ||
@@ -137,11 +138,15 @@ export function Ajustes() {
     if (confirm('Deseja desconectar sua conta? Os dados permanecerão salvos com segurança.')) {
       try {
         await logoutUser();
-        setToastMessage('Conta desconectada.');
+        setSettings(DEFAULT_SETTINGS);
+        setToastMessage('Conta desconectada com sucesso.');
         setShowSavedToast(true);
         setTimeout(() => setShowSavedToast(false), 3500);
       } catch (err: any) {
-        console.error('Erro ao deslogar:', err);
+        console.error('Erro ao desconectar:', err);
+        setToastMessage('Erro ao desconectar conta.');
+        setShowSavedToast(true);
+        setTimeout(() => setShowSavedToast(false), 3500);
       }
     }
   };

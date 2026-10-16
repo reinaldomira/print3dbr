@@ -274,7 +274,7 @@ export function NovaNota({ onNavigate, initialCliente }: NovaNotaProps) {
     }
 
     const hoje = new Date();
-    const dataFormatada = hoje.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }) + ' - ' + hoje.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const dataFormatada = hoje.toLocaleDateString('pt-BR');
     
     const pct = pricing.descontoPercentual;
 

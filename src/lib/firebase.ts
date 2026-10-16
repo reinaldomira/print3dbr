@@ -106,7 +106,72 @@ export async function signInWithGoogle(): Promise<User> {
   return result.user;
 }
 
+let isGlobalMigrationInProgress = false;
+
+export function setGlobalMigrationInProgress(inProgress: boolean): void {
+  isGlobalMigrationInProgress = inProgress;
+}
+
+export function getGlobalMigrationInProgress(): boolean {
+  return isGlobalMigrationInProgress;
+}
+
+const DEFAULT_SYSTEM_SETTINGS = {
+  nomeEmpresa: 'Print_3dbr',
+  subtituloEmpresa: 'Laboratório de Impressão 3D',
+  logotipoUrl: '',
+  whatsapp: '47 988512351',
+  instagram: '@print_3dbr',
+  email: 'contato@print3dbr.com',
+  chavePix: '47 988512351',
+  corPrincipal: '#0066ff',
+  mensagemRodape: 'Obrigado pela preferência! Este documento é um recibo de prestação de serviços de impressão 3D.',
+  observacoesPadrao: 'Peças produzidas com precisão de 0.12mm. Recomendado evitar exposição solar direta prolongada.',
+  impostoPadrao: 0,
+  taxaPagamentoPadrao: 0,
+  comissaoMarketplacePadrao: 0,
+  embalagemPadrao: 0,
+  outrosCustosPadrao: 0,
+  margemLucroPadrao: 40,
+  arredondamentoComercialPadrao: false
+};
+
+const STORAGE_KEYS_TO_CLEAR = [
+  'print3dbr_pedidos',
+  'print3dbr_clientes',
+  'print3dbr_settings',
+  'print3dbr_has_seeded'
+];
+
+/**
+ * Limpa o cache local e notifica a interface com dados vazios/padrões,
+ * impedindo vazamento de informações entre usuários no mesmo navegador.
+ */
+export function clearLocalUserData(): void {
+  if (typeof window === 'undefined' && typeof localStorage === 'undefined') return;
+  const storage = typeof localStorage !== 'undefined' ? localStorage : (typeof window !== 'undefined' ? window.localStorage : null);
+  if (!storage) return;
+
+  try {
+    STORAGE_KEYS_TO_CLEAR.forEach(key => {
+      storage.removeItem(key);
+    });
+
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: [] }));
+      window.dispatchEvent(new CustomEvent('clientesUpdated', { detail: [] }));
+      window.dispatchEvent(new CustomEvent('settingsUpdated', { detail: DEFAULT_SYSTEM_SETTINGS }));
+    }
+  } catch (err) {
+    console.error('[Print3DBR] Erro ao limpar cache local:', err);
+  }
+}
+
 export async function logoutUser(): Promise<void> {
+  clearLocalUserData();
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('print3dbr_last_uid');
+  }
   await signOut(auth);
 }
 
@@ -114,8 +179,27 @@ export function subscribeToAuth(callback: (user: User | null) => void) {
   return onAuthStateChanged(auth, callback);
 }
 
-// Fallback anônimo para manter o app funcional quando o usuário ainda não conectou com Google
+const LAST_UID_KEY = 'print3dbr_last_uid';
+
+// Observador central para gerenciar transição de contas e fallback anônimo
 onAuthStateChanged(auth, (user) => {
+  if (typeof window !== 'undefined') {
+    const lastUid = localStorage.getItem(LAST_UID_KEY);
+    const currentUid = user?.uid || null;
+
+    if (currentUid) {
+      // Se o usuário autenticado mudou para um uid diferente do anterior,
+      // limpa o cache local antes de carregar os dados do novo usuário.
+      // Exceção: migração de anônimo para Google já existente em andamento.
+      if (lastUid && lastUid !== currentUid && !getGlobalMigrationInProgress()) {
+        console.log(`[Print3DBR] Transição de usuário detectada (${lastUid} -> ${currentUid}). Limpando cache local.`);
+        clearLocalUserData();
+      }
+      localStorage.setItem(LAST_UID_KEY, currentUid);
+    }
+  }
+
+  // Fallback anônimo para manter o app funcional quando o usuário ainda não conectou com Google
   if (!user) {
     signInAnonymously(auth).catch((err) => {
       console.log('Firebase auth fallback initialization:', err?.message || err);

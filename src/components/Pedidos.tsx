@@ -507,11 +507,15 @@ export function Pedidos({ onNavigate }: PedidosProps) {
             <div className="w-14 h-14 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant mb-4 border border-outline-variant">
               <ShoppingBag className="w-7 h-7" />
             </div>
-            <h3 className="text-lg font-semibold text-on-surface">Nenhum pedido encontrado</h3>
+            <h3 className="text-lg font-semibold text-on-surface">
+              {searchTerm || periodFilter !== 'todos' || statusFilter !== 'todos'
+                ? 'Nenhum pedido encontrado'
+                : 'Nenhum pedido registrado ainda'}
+            </h3>
             <p className="text-sm text-on-surface-variant max-w-md mt-1 mb-6">
               {searchTerm || periodFilter !== 'todos' || statusFilter !== 'todos'
                 ? 'Nenhum resultado corresponde aos seus filtros de busca. Tente ajustar os termos ou limpar os filtros.'
-                : 'Você ainda não registrou nenhuma venda. Clique no botão abaixo para criar seu primeiro pedido.'}
+                : 'Você ainda não registrou nenhuma venda ou orçamento. Clique no botão abaixo para criar seu primeiro pedido 3D.'}
             </p>
             {searchTerm || periodFilter !== 'todos' || statusFilter !== 'todos' ? (
               <button 

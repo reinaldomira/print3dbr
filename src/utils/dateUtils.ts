@@ -223,3 +223,19 @@ export function calculateConsolidatedReport(
     topItems,
   };
 }
+
+export function formatCompactDate(dateStr?: string): string {
+  if (!dateStr || dateStr.trim() === '') return 'Hoje';
+  const str = dateStr.trim();
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+    return str;
+  }
+  const parsed = parsePedidoDate(str);
+  if (parsed && !isNaN(parsed.getTime())) {
+    const dia = String(parsed.getDate()).padStart(2, '0');
+    const mes = String(parsed.getMonth() + 1).padStart(2, '0');
+    const ano = parsed.getFullYear();
+    return `${dia}/${mes}/${ano}`;
+  }
+  return str;
+}
