@@ -3,50 +3,150 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Bloqueia qualquer acesso irrestrito por padrão (Default-Deny)
-    match /{document=**} {
-      allow read, write: if false;
+    // No Firestore, qualquer documento ou coleção não explicitamente autorizado
+    // é negado por padrão (Default-Deny implícito).
+    // O bloco redundante `match /{document=**} { allow read, write: if false; }`
+    // foi removido conforme as boas práticas do Firestore para evitar regras mortas.
+
+    // =========================================================================
+    // Funções Auxiliares de Autenticação e Propriedade
+    // =========================================================================
+
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // Pedidos e Orçamentos: Somente o proprietário autenticado pode acessar
+    function isOwner(data) {
+      return isSignedIn() && data.ownerUid == request.auth.uid;
+    }
+
+    // =========================================================================
+    // Validações por Coleção
+    // =========================================================================
+
+    // Validação estrita para a coleção "pedidos"
+    function validPedido(data) {
+      return data.keys().hasAll([
+        'id', 'ownerUid', 'cliente', 'telefone', 'data', 'total',
+        'metodoPagamento', 'status', 'observacoes', 'itens'
+      ])
+      && data.keys().hasOnly([
+        'id', 'ownerUid', 'cliente', 'telefone', 'data', 'total',
+        'desconto', 'descontoPercentual', 'metodoPagamento', 'status',
+        'observacoes', 'itens', 'custosFinanceiros', 'detalhesPrecificacao'
+      ])
+      && data.id is string && data.id.size() > 0 && data.id.size() <= 100
+      && data.ownerUid is string && data.ownerUid == request.auth.uid
+      && data.cliente is string && data.cliente.size() <= 200
+      && data.telefone is string && data.telefone.size() <= 50
+      && data.data is string && data.data.size() <= 100
+      && data.total is number && data.total >= 0
+      && data.metodoPagamento in ['pix', 'cartao', 'dinheiro', 'outro']
+      && data.status in ['pendente', 'na_fila', 'imprimindo', 'acabamento', 'pronto', 'entregue', 'aprovado', 'cancelado']
+      && data.observacoes is string && data.observacoes.size() <= 5000
+      && data.itens is list && data.itens.size() <= 100
+      && (!('desconto' in data) || (data.desconto is number && data.desconto >= 0))
+      && (!('descontoPercentual' in data) || (data.descontoPercentual is number && data.descontoPercentual >= 0 && data.descontoPercentual <= 100))
+      && (!('custosFinanceiros' in data) || data.custosFinanceiros is map)
+      && (!('detalhesPrecificacao' in data) || data.detalhesPrecificacao is map);
+    }
+
+    // Validação estrita para a coleção "clientes"
+    function validCliente(data) {
+      return data.keys().hasAll(['id', 'nome', 'telefone', 'criadoEm', 'ownerUid'])
+      && data.keys().hasOnly(['id', 'nome', 'telefone', 'email', 'cidade', 'observacoes', 'criadoEm', 'ownerUid'])
+      && data.id is string && data.id.size() > 0 && data.id.size() <= 100
+      && data.ownerUid is string && data.ownerUid == request.auth.uid
+      && data.nome is string && data.nome.size() > 0 && data.nome.size() <= 200
+      && data.telefone is string && data.telefone.size() <= 50
+      && data.criadoEm is string && data.criadoEm.size() <= 50
+      && (!('email' in data) || (data.email is string && data.email.size() <= 200))
+      && (!('cidade' in data) || (data.cidade is string && data.cidade.size() <= 100))
+      && (!('observacoes' in data) || (data.observacoes is string && data.observacoes.size() <= 5000));
+    }
+
+    // Validação estrita para os documentos de "settings"
+    function validSettings(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'nomeEmpresa', 'subtituloEmpresa', 'logotipoUrl',
+        'whatsapp', 'instagram', 'email', 'chavePix', 'corPrincipal',
+        'mensagemRodape', 'observacoesPadrao', 'impostoPadrao',
+        'taxaPagamentoPadrao', 'comissaoMarketplacePadrao', 'embalagemPadrao',
+        'outrosCustosPadrao', 'margemLucroPadrao'
+      ])
+      && data.keys().hasOnly([
+        'ownerUid', 'nomeEmpresa', 'subtituloEmpresa', 'logotipoUrl',
+        'whatsapp', 'instagram', 'email', 'chavePix', 'corPrincipal',
+        'mensagemRodape', 'observacoesPadrao', 'impostoPadrao',
+        'taxaPagamentoPadrao', 'comissaoMarketplacePadrao', 'embalagemPadrao',
+        'outrosCustosPadrao', 'margemLucroPadrao', 'arredondamentoComercialPadrao'
+      ])
+      && data.ownerUid is string && data.ownerUid == request.auth.uid
+      && data.nomeEmpresa is string && data.nomeEmpresa.size() <= 200
+      && data.subtituloEmpresa is string && data.subtituloEmpresa.size() <= 200
+      && data.logotipoUrl is string && data.logotipoUrl.size() <= 400000
+      && data.whatsapp is string && data.whatsapp.size() <= 50
+      && data.instagram is string && data.instagram.size() <= 100
+      && data.email is string && data.email.size() <= 200
+      && data.chavePix is string && data.chavePix.size() <= 200
+      && data.corPrincipal is string && data.corPrincipal.size() <= 30
+      && data.mensagemRodape is string && data.mensagemRodape.size() <= 1000
+      && data.observacoesPadrao is string && data.observacoesPadrao.size() <= 5000
+      && data.impostoPadrao is number && data.impostoPadrao >= 0 && data.impostoPadrao <= 100
+      && data.taxaPagamentoPadrao is number && data.taxaPagamentoPadrao >= 0 && data.taxaPagamentoPadrao <= 100
+      && data.comissaoMarketplacePadrao is number && data.comissaoMarketplacePadrao >= 0 && data.comissaoMarketplacePadrao <= 100
+      && data.embalagemPadrao is number && data.embalagemPadrao >= 0
+      && data.outrosCustosPadrao is number && data.outrosCustosPadrao >= 0
+      && data.margemLucroPadrao is number && data.margemLucroPadrao >= 0
+      && (!('arredondamentoComercialPadrao' in data) || data.arredondamentoComercialPadrao is bool);
+    }
+
+    // =========================================================================
+    // Regras de Acesso por Coleção (operações granulares get/list/create/update/delete)
+    // =========================================================================
+
+    // Pedidos e Orçamentos: Isolados por ownerUid
     match /pedidos/{pedidoId} {
-      // Leitura individual de documento: apenas se o documento pertencer ao usuário autenticado
-      allow get: if request.auth != null && resource.data.ownerUid == request.auth.uid;
-      
-      // Listagem / consultas: apenas consultas formuladas com where('ownerUid', '==', request.auth.uid)
-      allow list: if request.auth != null && resource.data.ownerUid == request.auth.uid;
-      
-      // Criação: exige que o novo documento defina o ownerUid igual ao UID autenticado
-      allow create: if request.auth != null 
-        && request.resource.data.ownerUid == request.auth.uid;
-      
-      // Edição: apenas o proprietário pode editar e o campo ownerUid permanece inalterado
-      allow update: if request.auth != null 
-        && resource.data.ownerUid == request.auth.uid 
-        && request.resource.data.ownerUid == resource.data.ownerUid;
-      
-      // Exclusão: apenas o proprietário pode excluir
-      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow get: if isOwner(resource.data);
+      allow list: if isOwner(resource.data);
+      allow create: if isSignedIn() 
+        && request.resource.data.ownerUid == request.auth.uid 
+        && validPedido(request.resource.data);
+      allow update: if isOwner(resource.data) 
+        && request.resource.data.ownerUid == resource.data.ownerUid 
+        && validPedido(request.resource.data);
+      allow delete: if isOwner(resource.data);
     }
 
-    // Configurações: Cada usuário acessa suas próprias configurações isoladas por UID ou ownerUid
-    match /settings/{settingId} {
-      allow get: if request.auth != null && (settingId == request.auth.uid || resource.data.ownerUid == request.auth.uid);
-      allow list: if request.auth != null && resource.data.ownerUid == request.auth.uid;
-      allow create: if request.auth != null && (settingId == request.auth.uid || request.resource.data.ownerUid == request.auth.uid);
-      allow update: if request.auth != null && (settingId == request.auth.uid || resource.data.ownerUid == request.auth.uid);
-      allow delete: if request.auth != null && (settingId == request.auth.uid || resource.data.ownerUid == request.auth.uid);
-    }
-
-    // Clientes: Somente o proprietário autenticado pode acessar
+    // Clientes: Isolados por ownerUid
     match /clientes/{clienteId} {
-      allow get: if request.auth != null && resource.data.ownerUid == request.auth.uid;
-      allow list: if request.auth != null && resource.data.ownerUid == request.auth.uid;
-      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
-      allow update: if request.auth != null 
-        && resource.data.ownerUid == request.auth.uid 
-        && request.resource.data.ownerUid == resource.data.ownerUid;
-      allow delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow get: if isOwner(resource.data);
+      allow list: if isOwner(resource.data);
+      allow create: if isSignedIn() 
+        && request.resource.data.ownerUid == request.auth.uid 
+        && validCliente(request.resource.data);
+      allow update: if isOwner(resource.data) 
+        && request.resource.data.ownerUid == resource.data.ownerUid 
+        && validCliente(request.resource.data);
+      allow delete: if isOwner(resource.data);
+    }
+
+    // Configurações: Documento identificado estritamente pelo UID do usuário
+    match /settings/{settingId} {
+      allow get: if isSignedIn() && (settingId == request.auth.uid || resource.data.ownerUid == request.auth.uid);
+      allow list: if isOwner(resource.data);
+      allow create: if isSignedIn() 
+        && settingId == request.auth.uid 
+        && request.resource.data.ownerUid == request.auth.uid 
+        && validSettings(request.resource.data);
+      allow update: if isSignedIn() 
+        && settingId == request.auth.uid 
+        && isOwner(resource.data) 
+        && request.resource.data.ownerUid == resource.data.ownerUid 
+        && validSettings(request.resource.data);
+      allow delete: if isSignedIn() 
+        && settingId == request.auth.uid 
+        && isOwner(resource.data);
     }
   }
 }

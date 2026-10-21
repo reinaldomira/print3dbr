@@ -1,5 +1,6 @@
 import { Cliente } from '../types';
 import { db, auth, subscribeToAuth, handleFirestoreError, OperationType } from '../lib/firebase';
+import { sanitizeForFirestore } from './ordersStorage';
 import { 
   collection, 
   doc, 
@@ -59,6 +60,7 @@ export async function saveCliente(cliente: Cliente): Promise<void> {
   const currentUid = auth?.currentUser?.uid;
   const clienteComUid: Cliente = {
     ...cliente,
+    criadoEm: cliente.criadoEm || new Date().toISOString(),
     ...(currentUid ? { ownerUid: cliente.ownerUid || currentUid } : {})
   };
   const current = getStoredClientes();
@@ -81,10 +83,10 @@ export async function saveCliente(cliente: Cliente): Promise<void> {
       const targetDocId = clienteDocIdMap[clienteComUid.id] || makeClienteDocId(currentUid, clienteComUid.id);
       clienteDocIdMap[clienteComUid.id] = targetDocId;
       const clienteDocRef = doc(db, CLIENTES_COLLECTION, targetDocId);
-      await setDoc(clienteDocRef, {
+      await setDoc(clienteDocRef, sanitizeForFirestore({
         ...clienteComUid,
         ownerUid: currentUid
-      }, { merge: true });
+      }), { merge: true });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'clientes');
     }
@@ -110,7 +112,7 @@ export async function updateCliente(id: string, updates: Partial<Cliente>): Prom
       clienteDocIdMap[id] = targetDocId;
       const clienteDocRef = doc(db, CLIENTES_COLLECTION, targetDocId);
       const { id: _, ...fieldsToUpdate } = updates;
-      await updateDoc(clienteDocRef, fieldsToUpdate);
+      await updateDoc(clienteDocRef, sanitizeForFirestore(fieldsToUpdate));
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, 'clientes');
     }

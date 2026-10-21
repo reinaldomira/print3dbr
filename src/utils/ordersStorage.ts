@@ -302,7 +302,7 @@ export function savePedido(novoPedido: Pedido): Pedido[] {
       descricao: item.descricao || '',
       qtd: Number(item.qtd) > 0 ? Number(item.qtd) : 1,
       valorUnitario: Number(item.valorUnitario) >= 0 ? Number(item.valorUnitario) : 0,
-      ...(item.imagemUrl ? { imagemUrl: item.imagemUrl } : {})
+      ...(item.imagemUrl && item.imagemUrl.length <= 400000 ? { imagemUrl: item.imagemUrl } : {})
     }))
   };
 
@@ -349,7 +349,7 @@ export function updatePedido(pedidoAtualizado: Pedido): Pedido[] {
       descricao: item.descricao || '',
       qtd: Number(item.qtd) > 0 ? Number(item.qtd) : 1,
       valorUnitario: Number(item.valorUnitario) >= 0 ? Number(item.valorUnitario) : 0,
-      ...(item.imagemUrl ? { imagemUrl: item.imagemUrl } : {})
+      ...(item.imagemUrl && item.imagemUrl.length <= 400000 ? { imagemUrl: item.imagemUrl } : {})
     }))
   };
 

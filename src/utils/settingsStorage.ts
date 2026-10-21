@@ -29,10 +29,10 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   nomeEmpresa: 'Print_3dbr',
   subtituloEmpresa: 'Laboratório de Impressão 3D',
   logotipoUrl: '',
-  whatsapp: '47 988512351',
+  whatsapp: '',
   instagram: '@print_3dbr',
-  email: 'contato@print3dbr.com',
-  chavePix: '47 988512351',
+  email: '',
+  chavePix: '',
   corPrincipal: '#0066ff',
   mensagemRodape: 'Obrigado pela preferência! Este documento é um recibo de prestação de serviços de impressão 3D.',
   observacoesPadrao: 'Peças produzidas com precisão de 0.12mm. Recomendado evitar exposição solar direta prolongada.',
@@ -75,7 +75,7 @@ function setupSettingsListener(uid: string | null) {
           ownerUid: uid
         };
         const sanitized = { ...initialData };
-        if (sanitized.logotipoUrl && sanitized.logotipoUrl.length > 500000) {
+        if (sanitized.logotipoUrl && sanitized.logotipoUrl.length > 400000) {
           sanitized.logotipoUrl = '';
         }
         setDoc(userDocRef, sanitized).catch(err => {
@@ -124,7 +124,7 @@ export function getStoredSettings(): SystemSettings {
   }
 }
 
-export function saveStoredSettings(newSettings: SystemSettings): SystemSettings {
+export function saveStoredSettings(newSettings: SystemSettings): SystemSettings & { logoDiscarded: boolean } {
   const currentUid = auth.currentUser?.uid;
   const merged: SystemSettings = { 
     ...DEFAULT_SETTINGS, 
@@ -134,12 +134,15 @@ export function saveStoredSettings(newSettings: SystemSettings): SystemSettings 
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
   window.dispatchEvent(new CustomEvent('settingsUpdated', { detail: merged }));
 
+  let logoDiscarded = false;
+
   // Grava no documento do usuário autenticado no Firestore se disponível
   if (currentUid) {
     try {
       const firestoreSettings = { ...merged };
-      if (firestoreSettings.logotipoUrl && firestoreSettings.logotipoUrl.length > 500000) {
+      if (firestoreSettings.logotipoUrl && firestoreSettings.logotipoUrl.length > 400000) {
         firestoreSettings.logotipoUrl = '';
+        logoDiscarded = true;
       }
 
       const userDocRef = doc(db, 'settings', currentUid);
@@ -151,7 +154,7 @@ export function saveStoredSettings(newSettings: SystemSettings): SystemSettings 
     }
   }
 
-  return merged;
+  return { ...merged, logoDiscarded };
 }
 
 export function getStoredFinancialDefaults() {

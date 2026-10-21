@@ -342,18 +342,16 @@ export const DocumentoOrcamento = forwardRef<HTMLDivElement, DocumentoOrcamentoP
 
               {pedido.metodoPagamento === 'pix' || !pedido.metodoPagamento ? (
                 <div className="flex items-center gap-4">
-                  {/* QR Code PIX */}
-                  <div className="w-20 h-20 sm:w-22 sm:h-22 bg-white border border-slate-200 p-1 rounded-lg shrink-0 flex items-center justify-center shadow-xs">
-                    {qrCodeUrl ? (
+                  {/* QR Code PIX - exibe apenas se houver chave cadastrada */}
+                  {chavePix && qrCodeUrl ? (
+                    <div className="w-20 h-20 sm:w-22 sm:h-22 bg-white border border-slate-200 p-1 rounded-lg shrink-0 flex items-center justify-center shadow-xs">
                       <img
                         src={qrCodeUrl}
                         alt="QR Code PIX"
                         className="w-full h-full object-contain"
                       />
-                    ) : (
-                      <QrCode className="w-12 h-12 text-slate-700" />
-                    )}
-                  </div>
+                    </div>
+                  ) : null}
 
                   {/* Dados Chave PIX */}
                   <div className="min-w-0 text-xs flex-1">
@@ -362,7 +360,7 @@ export const DocumentoOrcamento = forwardRef<HTMLDivElement, DocumentoOrcamentoP
                     </span>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="font-mono font-bold text-xs sm:text-sm text-slate-900 break-all">
-                        {chavePix || 'A combinar'}
+                        {chavePix || 'A combinar com o vendedor'}
                       </span>
                       {chavePix && (
                         <button
@@ -379,7 +377,7 @@ export const DocumentoOrcamento = forwardRef<HTMLDivElement, DocumentoOrcamentoP
                         </button>
                       )}
                     </div>
-                    {nomeEmpresa && (
+                    {chavePix && nomeEmpresa && (
                       <span className="text-[10px] text-slate-500 block mt-1">
                         Beneficiário: <strong className="text-slate-800">{nomeEmpresa}</strong>
                       </span>

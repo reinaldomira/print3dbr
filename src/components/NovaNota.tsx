@@ -34,6 +34,7 @@ import { getStoredSettings } from '../utils/settingsStorage';
 import { getStoredClientes, saveCliente } from '../utils/clientesStorage';
 import { STATUS_LIST } from '../utils/statusUtils';
 import { calculateSalePrice, sanitizeNumeric } from '../utils/pricingCalculator';
+import { compressImage } from '../utils/imageUtils';
 
 interface NovaNotaProps {
   onNavigate?: (tab: Tab) => void;
@@ -43,6 +44,7 @@ interface NovaNotaProps {
 export function NovaNota({ onNavigate, initialCliente }: NovaNotaProps) {
   const [cliente, setCliente] = useState('');
   const [telefone, setTelefone] = useState('');
+  const [imageError, setImageError] = useState<string | null>(null);
   const [listaClientes, setListaClientes] = useState<Cliente[]>([]);
   const [mostrarDropdownClientes, setMostrarDropdownClientes] = useState(false);
   const [clienteSalvoRapido, setClienteSalvoRapido] = useState(false);
@@ -206,39 +208,17 @@ export function NovaNota({ onNavigate, initialCliente }: NovaNotaProps) {
     }));
   };
 
-  const handleImageUpload = (id: string, file: File) => {
+  const handleImageUpload = async (id: string, file: File) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const maxDim = 800;
-        let width = img.width;
-        let height = img.height;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.85);
-          handleItemChange(id, 'imagemUrl', compressed);
-        } else {
-          handleItemChange(id, 'imagemUrl', e.target?.result as string);
-        }
-      };
-      img.src = e.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+    try {
+      setImageError(null);
+      const compressed = await compressImage(file, { maxDim: 800, maxBytes: 150 * 1024 });
+      handleItemChange(id, 'imagemUrl', compressed);
+    } catch (err: any) {
+      const msg = err?.message || 'Erro ao processar imagem da peça.';
+      setImageError(msg);
+      setTimeout(() => setImageError(null), 6000);
+    }
   };
 
   const formatCurrency = (val: number) => {
@@ -487,6 +467,15 @@ export function NovaNota({ onNavigate, initialCliente }: NovaNotaProps) {
                 Adicionar Peça
               </button>
             </div>
+            {imageError && (
+              <div className="mx-6 my-3 p-3 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-center justify-between animate-in fade-in">
+                <span className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{imageError}</span>
+                </span>
+                <button type="button" onClick={() => setImageError(null)} className="cursor-pointer font-bold ml-2 text-rose-300 hover:text-white">✕</button>
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -521,7 +510,7 @@ export function NovaNota({ onNavigate, initialCliente }: NovaNotaProps) {
                             <span className="text-[9px] font-mono mt-0.5">+Foto</span>
                             <input 
                               type="file" 
-                              accept="image/*" 
+                              accept="image/png, image/jpeg, image/webp" 
                               className="hidden" 
                               onChange={(e) => {
                                 if (e.target.files?.[0]) {

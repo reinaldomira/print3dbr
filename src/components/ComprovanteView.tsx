@@ -94,7 +94,7 @@ export function ComprovanteView({ pedido, onClose, onOrderUpdated }: Comprovante
     const encoded = encodeURIComponent(texto);
     const cleanPhone = activePedido.telefone ? activePedido.telefone.replace(/\D/g, '') : '';
     const url = cleanPhone ? `https://wa.me/55${cleanPhone}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
-    window.open(url, '_blank');
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   const formatCurrency = (val: number) => {

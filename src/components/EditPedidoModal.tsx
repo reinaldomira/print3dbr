@@ -4,6 +4,7 @@ import { Pedido, PedidoItem, PedidoStatus, PricingBreakdown } from '../types';
 import { STATUS_LIST } from '../utils/statusUtils';
 import { updatePedido } from '../utils/ordersStorage';
 import { calculateSalePrice } from '../utils/pricingCalculator';
+import { compressImage } from '../utils/imageUtils';
 
 interface EditPedidoModalProps {
   pedido: Pedido;
@@ -67,39 +68,15 @@ export function EditPedidoModal({ pedido, onClose, onSave }: EditPedidoModalProp
     }));
   };
 
-  const handleImageUpload = (id: string, file: File) => {
+  const handleImageUpload = async (id: string, file: File) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const maxDim = 800;
-        let width = img.width;
-        let height = img.height;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.85);
-          handleItemChange(id, 'imagemUrl', compressed);
-        } else {
-          handleItemChange(id, 'imagemUrl', e.target?.result as string);
-        }
-      };
-      img.src = e.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+    try {
+      setErrorMsg(null);
+      const compressed = await compressImage(file, { maxDim: 800, maxBytes: 150 * 1024 });
+      handleItemChange(id, 'imagemUrl', compressed);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Erro ao processar imagem da peça.');
+    }
   };
 
   const subtotalCalculado = itens.reduce((acc, item) => {

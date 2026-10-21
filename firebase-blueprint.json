@@ -2,43 +2,83 @@
   "entities": {
     "pedidos": {
       "title": "Pedidos de Venda e Orçamentos",
-      "description": "Lista de pedidos e orçamentos de impressão 3D",
-      "type": "collection",
-      "path": "pedidos",
-      "params": [],
-      "fields": {
-        "id": { "type": "string", "description": "ID do pedido ex: #000042" },
+      "description": "Lista de pedidos e orçamentos de impressão 3D isolados por usuário proprietário",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID do pedido ex: #000042", "maxLength": 100 },
         "ownerUid": { "type": "string", "description": "UID do usuário proprietário autenticado" },
-        "cliente": { "type": "string", "description": "Nome do cliente" },
-        "telefone": { "type": "string", "description": "Telefone do cliente" },
-        "data": { "type": "string", "description": "Data de emissão" },
+        "cliente": { "type": "string", "description": "Nome do cliente", "maxLength": 200 },
+        "telefone": { "type": "string", "description": "Telefone do cliente", "maxLength": 50 },
+        "data": { "type": "string", "description": "Data de emissão", "maxLength": 100 },
         "total": { "type": "number", "description": "Valor total cobrado" },
         "desconto": { "type": "number", "description": "Valor de desconto em R$" },
         "descontoPercentual": { "type": "number", "description": "Percentual de desconto" },
-        "metodoPagamento": { "type": "string", "description": "Método de pagamento" },
-        "status": { "type": "string", "description": "Status da peça / pedido" },
-        "observacoes": { "type": "string", "description": "Observações do pedido" },
-        "itens": { "type": "array", "description": "Lista de itens do pedido" }
-      }
+        "metodoPagamento": { 
+          "type": "string", 
+          "description": "Método de pagamento",
+          "enum": ["pix", "cartao", "dinheiro", "outro"]
+        },
+        "status": { 
+          "type": "string", 
+          "description": "Status da peça / pedido",
+          "enum": ["pendente", "na_fila", "imprimindo", "acabamento", "pronto", "entregue", "aprovado", "cancelado"]
+        },
+        "observacoes": { "type": "string", "description": "Observações do pedido", "maxLength": 5000 },
+        "itens": { "type": "array", "description": "Lista de itens manufaturados do pedido (máximo 100)" },
+        "custosFinanceiros": { "type": "object", "description": "Detalhamento de taxas e custos do pedido" },
+        "detalhesPrecificacao": { "type": "object", "description": "Cálculo detalhado de formação de preço de venda" }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "cliente",
+        "telefone",
+        "data",
+        "total",
+        "metodoPagamento",
+        "status",
+        "observacoes",
+        "itens"
+      ]
+    },
+    "clientes": {
+      "title": "Clientes",
+      "description": "Cadastro de clientes isolados por usuário proprietário",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Identificador do cliente", "maxLength": 100 },
+        "ownerUid": { "type": "string", "description": "UID do usuário proprietário autenticado" },
+        "nome": { "type": "string", "description": "Nome completo ou razão social", "maxLength": 200 },
+        "telefone": { "type": "string", "description": "Telefone de contato", "maxLength": 50 },
+        "email": { "type": "string", "description": "E-mail de contato", "maxLength": 200 },
+        "cidade": { "type": "string", "description": "Cidade / Estado", "maxLength": 100 },
+        "observacoes": { "type": "string", "description": "Observações cadastrais", "maxLength": 5000 },
+        "criadoEm": { "type": "string", "description": "Data de cadastro ISO", "maxLength": 50 }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "nome",
+        "telefone",
+        "criadoEm"
+      ]
     },
     "settings": {
       "title": "Configurações do Sistema",
       "description": "Configurações personalizadas da empresa por usuário",
-      "type": "doc",
-      "path": "settings/{userId}",
-      "params": ["userId"],
-      "fields": {
+      "type": "object",
+      "properties": {
         "ownerUid": { "type": "string", "description": "UID do usuário proprietário" },
-        "nomeEmpresa": { "type": "string" },
-        "subtituloEmpresa": { "type": "string" },
-        "logotipoUrl": { "type": "string" },
-        "whatsapp": { "type": "string" },
-        "instagram": { "type": "string" },
-        "email": { "type": "string" },
-        "chavePix": { "type": "string" },
-        "corPrincipal": { "type": "string" },
-        "mensagemRodape": { "type": "string" },
-        "observacoesPadrao": { "type": "string" },
+        "nomeEmpresa": { "type": "string", "maxLength": 200 },
+        "subtituloEmpresa": { "type": "string", "maxLength": 200 },
+        "logotipoUrl": { "type": "string", "description": "Data URL ou URL do logotipo (máximo 400.000 caracteres)", "maxLength": 400000 },
+        "whatsapp": { "type": "string", "maxLength": 50 },
+        "instagram": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 200 },
+        "chavePix": { "type": "string", "maxLength": 200 },
+        "corPrincipal": { "type": "string", "maxLength": 30 },
+        "mensagemRodape": { "type": "string", "maxLength": 1000 },
+        "observacoesPadrao": { "type": "string", "maxLength": 5000 },
         "impostoPadrao": { "type": "number" },
         "taxaPagamentoPadrao": { "type": "number" },
         "comissaoMarketplacePadrao": { "type": "number" },
@@ -46,7 +86,40 @@
         "outrosCustosPadrao": { "type": "number" },
         "margemLucroPadrao": { "type": "number" },
         "arredondamentoComercialPadrao": { "type": "boolean" }
-      }
+      },
+      "required": [
+        "ownerUid",
+        "nomeEmpresa",
+        "subtituloEmpresa",
+        "logotipoUrl",
+        "whatsapp",
+        "instagram",
+        "email",
+        "chavePix",
+        "corPrincipal",
+        "mensagemRodape",
+        "observacoesPadrao",
+        "impostoPadrao",
+        "taxaPagamentoPadrao",
+        "comissaoMarketplacePadrao",
+        "embalagemPadrao",
+        "outrosCustosPadrao",
+        "margemLucroPadrao"
+      ]
+    }
+  },
+  "firestore": {
+    "/pedidos/{pedidoId}": {
+      "schema": "pedidos",
+      "description": "Coleção de pedidos e orçamentos isolados por ownerUid"
+    },
+    "/clientes/{clienteId}": {
+      "schema": "clientes",
+      "description": "Coleção de clientes cadastrados isolados por ownerUid"
+    },
+    "/settings/{userId}": {
+      "schema": "settings",
+      "description": "Documento individual de configurações da empresa por usuário"
     }
   }
 }

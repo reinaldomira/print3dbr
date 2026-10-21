@@ -441,9 +441,9 @@ export function generatePedidoVectorPDF(pedido: Pedido): void {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
     doc.setTextColor(15, 23, 42);
-    doc.text(chavePix || 'A combinar', 14, footerBlockY + 15);
+    doc.text(chavePix || 'A combinar com o vendedor', 14, footerBlockY + 15);
 
-    if (nomeEmpresa) {
+    if (chavePix && nomeEmpresa) {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7.5);
       doc.setTextColor(100, 116, 139);

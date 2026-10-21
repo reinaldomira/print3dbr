@@ -4,12 +4,14 @@ import { getStoredSettings, saveStoredSettings, DEFAULT_SETTINGS, SystemSettings
 import { calculateSalePrice } from '../utils/pricingCalculator';
 import { auth, subscribeToAuth, connectWithGoogle, logoutUser, setGlobalMigrationInProgress } from '../lib/firebase';
 import { executeGoogleMigration } from '../utils/ordersStorage';
+import { compressImage } from '../utils/imageUtils';
 import { User } from 'firebase/auth';
 
 export function Ajustes() {
   const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [showSavedToast, setShowSavedToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [logoError, setLogoError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -28,55 +30,32 @@ export function Ajustes() {
     setSettings(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 10 * 1024 * 1024) {
-      alert('O arquivo deve ter no máximo 10MB.');
-      return;
+    try {
+      setLogoError(null);
+      const compressed = await compressImage(file, { maxDim: 256, maxBytes: 100 * 1024 });
+      handleChange('logotipoUrl', compressed);
+      setToastMessage('Logotipo carregado e otimizado com sucesso!');
+      setShowSavedToast(true);
+      setTimeout(() => setShowSavedToast(false), 3500);
+    } catch (err: any) {
+      const msg = err?.message || 'Erro ao processar imagem do logotipo.';
+      setLogoError(msg);
+      setToastMessage(msg);
+      setShowSavedToast(true);
+      setTimeout(() => setShowSavedToast(false), 4500);
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const rawBase64 = reader.result as string;
-      
-      // Compress image via canvas to stay well below 100KB
-      const img = new Image();
-      img.src = rawBase64;
-      img.onload = () => {
-        const maxWidth = 300;
-        const maxHeight = 300;
-        let width = img.width;
-        let height = img.height;
-        if (width > maxWidth || height > maxHeight) {
-          if (width > height) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
-          } else {
-            width = Math.round((width * maxHeight) / height);
-            height = maxHeight;
-          }
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.85);
-          handleChange('logotipoUrl', compressed);
-        } else {
-          handleChange('logotipoUrl', rawBase64);
-        }
-      };
-      img.onerror = () => handleChange('logotipoUrl', rawBase64);
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleRemoveLogo = () => {
+    setLogoError(null);
     handleChange('logotipoUrl', '');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -84,10 +63,16 @@ export function Ajustes() {
   };
 
   const handleSave = () => {
-    saveStoredSettings(settings);
-    setToastMessage('Configurações salvas com sucesso!');
+    const result = saveStoredSettings(settings);
+    if (result.logoDiscarded) {
+      const msg = 'Atenção: As configurações foram salvas, mas o logotipo excedeu o limite máximo (400 KB) e não pôde ser gravado na nuvem.';
+      setToastMessage(msg);
+      setLogoError('O logotipo atual excede o limite máximo permitido (400 KB) para sincronização na nuvem.');
+    } else {
+      setToastMessage('Configurações salvas com sucesso!');
+    }
     setShowSavedToast(true);
-    setTimeout(() => setShowSavedToast(false), 3500);
+    setTimeout(() => setShowSavedToast(false), 4000);
   };
 
   const handleReset = () => {
@@ -493,8 +478,14 @@ export function Ajustes() {
                   >
                     <Upload className="text-outline group-hover:text-primary transition-colors w-7 h-7 mb-2" />
                     <span className="text-xs font-semibold text-on-surface group-hover:text-primary transition-colors">Carregar Logo</span>
-                    <span className="text-[10px] font-mono text-outline-variant mt-1">PNG/JPG (Max 2MB)</span>
+                    <span className="text-[10px] font-mono text-outline-variant mt-1">PNG, JPG, WebP (Max 10MB)</span>
                   </div>
+                )}
+
+                {logoError && (
+                  <span className="text-[11px] text-error font-mono font-medium max-w-[160px] text-center mt-1">
+                    ⚠️ {logoError}
+                  </span>
                 )}
               </div>
 
